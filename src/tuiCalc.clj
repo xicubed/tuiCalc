@@ -1,5 +1,18 @@
 (ns tuiCalc)
 
+(require '[clojure.string :as str]
+         '[charm.message :as msg]
+         '[charm.program :as program]
+         '[charm.style.core :as style])
+
+(defn parse-number [x]
+  (case x
+    "Math/PI" Math/PI
+    "PI"      Math/PI
+    "pi"      Math/PI
+    "π"       Math/PI
+    (parse-double x)))
+
 ;; Function to add two numbers
 (defn add [a b] (+ a b))
 
@@ -13,6 +26,15 @@
 (defn divide [a b]
   (if (zero? b) "Error: Division by zero" (/ a b)))
 
+;; Function to show the stack
+(defn show-stack [stack]
+  (println "┌──────────── tuiCalc ───────────┐")
+  (let [visible (vec (take-last 5 stack))]
+    (dotimes [_ (- 5 (count visible))]
+      (println "│                              │"))
+    (doseq [n visible]
+      (println (str "│ " n " │")))))
+
 ;; Main function to run the calculator
 (defn run [stack]
   (println "TUI Calculator")
@@ -24,14 +46,12 @@
     (flush)
 
     (when-let [input (read-line)]
-
       (let [input (str/trim input)]
         (cond
-
           ;; Quit
           (#{"q" "quit" "exit"} input)
           (do (println "Exiting calculator.")
-              (exit))
+              (System/exit 0))
 
           ;; Add
           (= input "+")
@@ -50,18 +70,9 @@
           (recur (conj stack (divide (peek stack) (second stack))))
 
           :else
-          (println "Invalid input"))))))
-
-;; Show stack function
-(defn show-stack [stack]
-  (println "┌──────────── icalc ───────────┐")
-
-  (let [visible (vec (take-last 5 stack))]
-    (dotimes [_ (- 5 (count visible))]
-      (println "│                              │"))
-
-    (doseq [n visible]
-      (println (str "│ " n " │")))))
+          (if-let [n (parse-number input)]
+                      (recur (conj stack n)) ; Corrected to pass only one argument to recur
+                      (recur stack)))))))
 
 ;; Main loop
 (run [])
