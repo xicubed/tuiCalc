@@ -54,6 +54,23 @@
           stack (pop stack)]
       [(conj stack (op a b)) nil])))
 
+;; ok getting fancy
+;; instead of 4 [Enter] 5 [Enter] + [Enter]
+;; we want    4 [Enter] 5 + ==> 9.0
+(defn commit-input [state]
+  (let [token (str/trim (text-input/value (:input state)))]
+    (if-let [n (and (not (str/blank? token))
+                    (parse-number token))]
+      (-> state
+          (update :stack conj n)
+          (assoc :input (text-input/reset (:input state))))
+      state)))
+(defn execute-op [state token]
+  (let [state (commit-input state)
+        [stack status] (apply-op (:stack state) (ops token))]
+    (assoc state
+           :stack stack
+           :status status)))
 
 ;; ------------------------------------------------------------
 ;; Charm state
@@ -122,28 +139,32 @@
 ;; ------------------------------------------------------------
 
 (defn update-fn [state message]
-  (cond
+  (let [key (:key message)]
 
-    ;; Always provide a direct escape hatch.
-    (msg/key-match? message "ctrl+c")
-    [state program/quit-cmd]
+    (cond
+      ;; Quit
+      (msg/key-match? message "ctrl+c")
+      [state program/quit-cmd]
 
-    ;; Enter submits whatever is in the input field.
-    (msg/key-match? message "enter")
-    (submit state)
+      ;; Operators execute immediately.
+      (and (msg/key-press? message)
+           (contains? ops key))
+      [(execute-op state key) nil]
 
-    ;; Everything else goes to Charm's text editor.
-    :else
-    (let [[input cmd]
-          (text-input/text-input-update
-           (:input state)
-           message)]
+      ;; Enter submits whatever is currently typed.
+      (msg/key-match? message :enter)
+      (submit state)
 
-      [(assoc state
-              :input input
-              :status nil)
-       cmd])))
-
+      ;; Everything else goes into the text field.
+      :else
+      (let [[input cmd]
+            (text-input/text-input-update
+             (:input state)
+             message)]
+        [(assoc state
+                :input input
+                :status nil)
+         cmd]))))
 
 ;; ------------------------------------------------------------
 ;; View
