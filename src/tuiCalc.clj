@@ -1,78 +1,227 @@
-(ns tuiCalc)
+#!/usr/bin/env bb
 
-(require '[clojure.string :as str]
-         '[charm.message :as msg]
-         '[charm.program :as program]
-         '[charm.style.core :as style])
+(ns tuiCalc
+  (:require
+   [charm.components.text-input :as text-input]
+   [charm.message :as msg]
+   [charm.program :as program]
+   [charm.style.core :as style]
+   [clojure.string :as str]))
 
-(defn parse-number [x]
-  (case x
-    "Math/PI" Math/PI
-    "PI"      Math/PI
-    "pi"      Math/PI
-    "π"       Math/PI
-    (parse-double x)))
+(def stack-height 8)
 
-;; Function to add two numbers
-(defn add [a b] (+ a b))
+;; ------------------------------------------------------------
+;; Calculator engine
+;; ------------------------------------------------------------
 
-;; Function to subtract two numbers
-(defn subtract [a b] (- a b))
+(defn ieee-div [a b]
+  (cond
+    (and (zero? a) (zero? b))
+    Double/NaN
 
-;; Function to multiply two numbers
-(defn multiply [a b] (* a b))
+    (zero? b)
+    (if (neg? a)
+      Double/NEGATIVE_INFINITY
+      Double/POSITIVE_INFINITY)
 
-;; Function to divide two numbers
-(defn divide [a b]
-  (if (zero? b) "Error: Division by zero" (/ a b)))
+    :else
+    (/ a b)))
 
-;; Function to show the stack
-(defn show-stack [stack]
-  (println "┌──────────── tuiCalc ───────────┐")
-  (let [visible (vec (take-last 5 stack))]
-    (dotimes [_ (- 5 (count visible))]
-      (println "│                              │"))
-    (doseq [n visible]
-      (println (str "│ " n " │")))))
+(def ops
+  {"+" +
+   "-" -
+   "x" *
+   "*" *
+   "/" ieee-div})
 
-;; Main function to run the calculator
-(defn run [stack]
-  (println "TUI Calculator")
-  (println "Enter 'q' to quit")
+(defn parse-number [s]
+  (case (str/lower-case s)
+    "pi" Math/PI
+    (try
+      (parse-double s)
+      (catch Exception _
+        nil))))
 
-  (loop [stack stack]
-    (show-stack stack)
-    (print "> ")
-    (flush)
+(defn apply-op [stack op]
+  (if (< (count stack) 2)
 
-    (when-let [input (read-line)]
-      (let [input (str/trim input)]
-        (cond
-          ;; Quit
-          (#{"q" "quit" "exit"} input)
-          (do (println "Exiting calculator.")
-              (System/exit 0))
+    ;; Don't alter the stack on underflow.
+    [stack "Need two values"]
 
-          ;; Add
-          (= input "+")
-          (recur (conj stack (add (peek stack) (second stack))))
+    (let [b     (peek stack)
+          stack (pop stack)
+          a     (peek stack)
+          stack (pop stack)]
+      [(conj stack (op a b)) nil])))
 
-          ;; Subtract
-          (= input "-")
-          (recur (conj stack (subtract (peek stack) (second stack))))
 
-          ;; Multiply
-          (= input "*")
-          (recur (conj stack (multiply (peek stack) (second stack))))
+;; ------------------------------------------------------------
+;; Charm state
+;; ------------------------------------------------------------
 
-          ;; Divide
-          (= input "/")
-          (recur (conj stack (divide (peek stack) (second stack))))
+(defn init []
+  [{:stack  []
+    :input  (text-input/text-input
+             :prompt "> "
+             :placeholder "number, pi, +, -, *, /"
+             :placeholder-style (style/style :faint true)
+             :focused true
+             :width 30)
+    :status nil}
+   nil])
 
-          :else
-          (if-let [n (parse-number input)]
-                      (recur (conj stack n)) ; Corrected to pass only one argument to recur
-                      (recur stack)))))))
 
-;; Main loop
-(run [])
+;; ------------------------------------------------------------
+;; Process one entered token
+;; ------------------------------------------------------------
+
+(defn submit [state]
+  (let [token (str/trim
+               (text-input/value (:input state)))
+
+        ;; Clear the input after Enter.
+        state (assoc state
+                     :input (text-input/reset (:input state))
+                     :status nil)]
+
+    (cond
+
+      ;; Empty Enter -- do nothing.
+      (str/blank? token)
+      [state nil]
+
+      ;; Quit commands.
+      (#{"q" "quit" "exit"} token)
+      [state program/quit-cmd]
+
+      ;; Clear the stack.
+      (= token "clear")
+      [(assoc state :stack []) nil]
+
+      ;; Arithmetic operator.
+      (contains? ops token)
+      (let [[stack status]
+            (apply-op (:stack state)
+                      (ops token))]
+        [(assoc state
+                :stack stack
+                :status status)
+         nil])
+
+      ;; Otherwise try to push a number.
+      :else
+      (if-let [n (parse-number token)]
+        [(update state :stack conj n) nil]
+        [(assoc state
+                :status (str "Unknown: " token))
+         nil]))))
+
+
+;; ------------------------------------------------------------
+;; Charm update
+;; ------------------------------------------------------------
+
+(defn update-fn [state message]
+  (cond
+
+    ;; Always provide a direct escape hatch.
+    (msg/key-match? message "ctrl+c")
+    [state program/quit-cmd]
+
+    ;; Enter submits whatever is in the input field.
+    (msg/key-match? message "enter")
+    (submit state)
+
+    ;; Everything else goes to Charm's text editor.
+    :else
+    (let [[input cmd]
+          (text-input/text-input-update
+           (:input state)
+           message)]
+
+      [(assoc state
+              :input input
+              :status nil)
+       cmd])))
+
+
+;; ------------------------------------------------------------
+;; View
+;; ------------------------------------------------------------
+
+(def title-style
+  (style/style
+   :fg style/cyan
+   :bold true))
+
+(def help-style
+  (style/style
+   :fg 240))
+
+(def error-style
+  (style/style
+   :fg style/red))
+
+(defn stack-lines [stack]
+  (let [visible (vec (take-last stack-height stack))
+        blanks  (- stack-height
+                   (count visible))]
+
+    (concat
+
+     ;; Empty rows are ABOVE the values.
+     ;; This makes the stack grow upward.
+     (repeat blanks
+             "│                              │")
+
+     ;; Oldest visible value first,
+     ;; newest / X register at bottom.
+     (map
+      #(format "│ %28s │" (str %))
+      visible))))
+
+(defn view [state]
+  (let [stack (:stack state)]
+
+    (str
+
+     (style/render
+      title-style
+      "┌─────────── tuiCalc ──────────┐")
+
+     "\n"
+
+     (str/join "\n"
+               (stack-lines stack))
+
+     "\n"
+     "└──────────────────────────────┘"
+     "\n\n"
+
+     ;; Charm owns the editing/cursor here.
+     (text-input/text-input-view
+      (:input state))
+
+     "\n\n"
+
+     (if-let [status (:status state)]
+       (style/render error-style status)
+       (style/render
+        help-style
+        "+  -  *  /    pi    clear    q"))
+
+     "\n")))
+
+
+;; ------------------------------------------------------------
+;; Go
+;; ------------------------------------------------------------
+
+(defn -main [& _]
+  (program/run
+   {:init init
+    :update update-fn
+    :view view
+    :alt-screen true}))
+
+(apply -main *command-line-args*)
