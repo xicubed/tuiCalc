@@ -1,0 +1,3 @@
+{:paths ["src"]
+ :deps {io.github.TimoKramer/charm.clj
+        {:git/sha "718daf3291b767f90cfe9ca9389f147bb83d58cd"}}}

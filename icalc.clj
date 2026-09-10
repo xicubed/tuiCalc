@@ -1,8 +1,11 @@
 #!/usr/bin/env bb
 
-(ns calc)
+(ns icalc)
 
-(require '[clojure.string :as str])
+(require '[clojure.string :as str]
+         '[charm.message :as msg]
+         '[charm.program :as program]
+         '[charm.style.core :as style])
 
 ;; Variable to hold the height of the stack
 (def stack-height 8)
