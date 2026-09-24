@@ -1,8 +1,21 @@
 # tuiCalc.clj — bugs to fix
 
-From code review on 2026-09-15, not yet implemented.
+From code review on 2026-09-15.
 
-## 1. Negative numbers can't be entered directly
+## 1. Negative numbers can't be entered directly ✅ FIXED
+
+`update-fn` (src/tuiCalc.clj:149-152) intercepts any keypress matching an
+`ops` key (`+ - x * /`) before it reaches the text field, so `-` can never
+be typed as the leading char of a number literal. Pressing `-` always
+commits pending input and subtracts, even if you meant to start typing
+`-5`. If a valid pair is already on the stack, this silently pops and
+subtracts them instead of starting a new number.
+Workaround today: `0 [Enter] 5 -`.
+
+**Fix:** Added clickable operator buttons `[+] [-] [*] [/]` that respond to
+mouse clicks. The `-` key now always goes to input for typing negative
+numbers. Mouse support enabled with `:mouse :normal`. Click the `[-]` button
+to subtract when you have 2+ values on the stack.
 `update-fn` (src/tuiCalc.clj:149-152) intercepts any keypress matching an
 `ops` key (`+ - x * /`) before it reaches the text field, so `-` can never
 be typed as the leading char of a number literal. Pressing `-` always

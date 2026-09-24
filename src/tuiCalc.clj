@@ -72,6 +72,34 @@
            :stack stack
            :status status)))
 
+;; Button hit-test: check if x coordinate is within a button's range
+;; Display: "[+] [-] [*] [/]  [CHS]  pi  clear  q"
+;; Positions: 0-2  4-6  8-10  12-14  17-21
+(defn find-button-at [x]
+  (cond
+    (<= 0 x 2) "+"
+    (<= 4 x 6) "-"
+    (<= 8 x 10) "*"
+    (<= 12 x 14) "/"
+    (<= 17 x 21) "CHS"
+    :else nil))
+
+;; Change sign of top stack value
+(defn chs [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (let [top    (peek (:stack state))
+          stack  (pop (:stack state))]
+      (assoc state :stack (conj stack (* -1 top))))))
+
+(defn handle-click [state x y]
+  ;; Check if click is on an operator button
+  (if-let [btn (find-button-at x)]
+    (if (= btn "CHS")
+      (chs state)
+      (execute-op state btn))
+    state))
+
 ;; ------------------------------------------------------------
 ;; Charm state
 ;; ------------------------------------------------------------
@@ -146,9 +174,16 @@
       (msg/key-match? message "ctrl+c")
       [state program/quit-cmd]
 
-      ;; Operators execute immediately.
+      ;; Mouse clicks on operator buttons.
+      (and (msg/mouse? message)
+           (= :press (:action message))
+           (= :left (:button message)))
+      [(handle-click state (:x message) (:y message)) nil]
+
+      ;; Operators execute immediately (keyboard shortcuts, except - for negative numbers).
       (and (msg/key-press? message)
-           (contains? ops key))
+           (contains? ops key)
+           (not (= key "-")))
       [(execute-op state key) nil]
 
       ;; Enter submits whatever is currently typed.
@@ -229,7 +264,7 @@
        (style/render error-style status)
        (style/render
         help-style
-        "+  -  *  /    pi    clear    q"))
+        "[+] [-] [*] [/]  [CHS]  pi  clear  q  (click or type)"))
 
      "\n")))
 
@@ -243,6 +278,7 @@
    {:init init
     :update update-fn
     :view view
-    :alt-screen true}))
+    :alt-screen true
+    :mouse :normal}))  ; Enable mouse clicks
 
 (apply -main *command-line-args*)
