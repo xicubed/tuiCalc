@@ -72,17 +72,36 @@
            :stack stack
            :status status)))
 
-;; Button hit-test: check if x coordinate is within a button's range
-;; Display: "[+] [-] [*] [/]  [CHS]  pi  clear  q"
-;; Positions: 0-2  4-6  8-10  12-14  17-21
+;; Push pi onto the stack (committing any pending input first).
+(defn push-pi [state]
+  (update (commit-input state) :stack conj Math/PI))
+
+;; Help-line buttons: [action display] pairs.
+;; Rendered into the help line and used for click hit-testing,
+;; so labels and positions can never drift apart.
+(def help-buttons
+  [["+" "[+]"]
+   ["-" "[-]"]
+   ["*" "[*]"]
+   ["/" "[/]"]
+   ["CHS" "[CHS]"]
+   ["pi" "[pi]"]
+   ["clear" "[clear]"]
+   ["q" "[q]"]])
+
+(defn help-line []
+  (str/join "  " (map second help-buttons)))
+
+;; Click hit-test: is x inside a button's range on the help line?
 (defn find-button-at [x]
-  (cond
-    (<= 0 x 2) "+"
-    (<= 4 x 6) "-"
-    (<= 8 x 10) "*"
-    (<= 12 x 14) "/"
-    (<= 17 x 21) "CHS"
-    :else nil))
+  (let [line (help-line)]
+    (some
+     (fn [[action display]]
+       (let [start (.indexOf line display)]
+         (when (and (>= x start)
+                    (< x (+ start (count display))))
+           action)))
+     help-buttons)))
 
 ;; Change sign of top stack value
 (defn chs [state]
@@ -98,11 +117,14 @@
   (let [help-y (+ 1 stack-height 5)]  ;; Dynamic calculation based on stack height
     (if (<= (- help-y 1) y (+ help-y 2))
       (if-let [btn (find-button-at x)]
-        (if (= btn "CHS")
-          (chs state)
-          (execute-op state btn))
-        state)
-      state)))  ;; Click outside button area, ignore
+        (case btn
+          "CHS"   [(chs state) nil]
+          "pi"    [(push-pi state) nil]
+          "clear" [(assoc state :stack []) nil]
+          "q"     [state program/quit-cmd]
+          [(execute-op state btn) nil])
+        [state nil])
+      [state nil])))  ;; Click outside button area, ignore
 
 ;; ------------------------------------------------------------
 ;; Charm state
@@ -178,11 +200,11 @@
       (msg/key-match? message "ctrl+c")
       [state program/quit-cmd]
 
-      ;; Mouse clicks on operator buttons.
+      ;; Mouse clicks on help-line buttons.
       (and (msg/mouse? message)
            (= :press (:action message))
            (= :left (:button message)))
-      [(handle-click state (:x message) (:y message)) nil]
+      (handle-click state (:x message) (:y message))
 
       ;; Operators execute immediately (keyboard shortcuts, except - for
       ;; negative numbers and x so words like "exit" can be typed).
@@ -269,7 +291,7 @@
        (style/render error-style status)
        (style/render
         help-style
-        "[+] [-] [*] [/]  [CHS]  pi  clear  q  (click or type)"))
+        (help-line)))
 
      "\n")))
 
