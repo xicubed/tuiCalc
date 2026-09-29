@@ -93,12 +93,16 @@
       (assoc state :stack (conj stack (* -1 top))))))
 
 (defn handle-click [state x y]
-  ;; Check if click is on an operator button
-  (if-let [btn (find-button-at x)]
-    (if (= btn "CHS")
-      (chs state)
-      (execute-op state btn))
-    state))
+  ;; Help text position: title(1) + stack-lines(stack-height) + border(1) + blank(1) + input(2) + blank(2) = ~12 + stack-height
+  ;; Use a range that covers the help line area
+  (let [help-y (+ 1 stack-height 5)]  ;; Dynamic calculation based on stack height
+    (if (<= (- help-y 1) y (+ help-y 2))
+      (if-let [btn (find-button-at x)]
+        (if (= btn "CHS")
+          (chs state)
+          (execute-op state btn))
+        state)
+      state)))  ;; Click outside button area, ignore
 
 ;; ------------------------------------------------------------
 ;; Charm state
