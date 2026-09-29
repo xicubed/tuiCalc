@@ -95,3 +95,4 @@ pom.xml.asc
 
 /.clj-kondo/
 /.lsp/
+/.claude/
