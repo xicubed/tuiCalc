@@ -79,13 +79,28 @@
 (defn push-pi [state]
   (update (commit-input state) :stack conj Math/PI))
 
+;; Change sign of the top stack value.
+(defn chs [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (let [top   (peek (:stack state))
+          stack (pop (:stack state))]
+      (assoc state :stack (conj stack (* -1 top))))))
+
+;; Drop the top value off the stack (the HP's CLx).
+(defn drop-top [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (assoc state :stack (pop (:stack state)))))
+
 ;; ------------------------------------------------------------
 ;; Process one entered token
 ;; ------------------------------------------------------------
 
 (defn submit [state]
-  (let [token (str/trim
-               (text-input/value (:input state)))
+  (let [raw   (str/trim (text-input/value (:input state)))
+        ;; Match commands case-insensitively (CHS, CLEAR, Q, ...).
+        token (str/lower-case raw)
 
         ;; Clear the input after Enter.
         state (assoc state
@@ -95,16 +110,24 @@
     (cond
 
       ;; Empty Enter -- do nothing.
-      (str/blank? token)
+      (str/blank? raw)
       [state nil]
 
       ;; Quit commands.
       (#{"q" "quit" "exit"} token)
       [state program/quit-cmd]
 
-      ;; Clear the stack.
+      ;; Clear the whole stack.
       (= token "clear")
       [(assoc state :stack []) nil]
+
+      ;; Change sign of the top value.
+      (= token "chs")
+      [(chs state) nil]
+
+      ;; Drop the top value off the stack.
+      (= token "drop")
+      [(drop-top state) nil]
 
       ;; Arithmetic operator.
       (contains? ops token)
@@ -121,60 +144,51 @@
       (if-let [n (parse-number token)]
         [(update state :stack conj n) nil]
         [(assoc state
-                :status (str "Unknown: " token))
+                :status (str "Unknown: " raw))
          nil]))))
 
-;; Help-line buttons: [action display] pairs.
-;; Rendered into the help line and used for click hit-testing,
-;; so labels and positions can never drift apart.
-(def help-buttons
-  [["+" "[+]"]
-   ["-" "[-]"]
-   ["*" "[*]"]
-   ["/" "[/]"]
-   ["CHS" "[CHS]"]
-   ["pi" "[pi]"]
-   ["clear" "[clear]"]
-   ["q" "[q]"]
-   ["enter" "[ENTER]"]])
+;; Help buttons, grouped into rows. Each button is [action display];
+;; the rows render as the help lines and drive click hit-testing, so
+;; labels and positions can never drift apart.
+(def help-rows
+  [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["CHS" "[CHS]"] ["pi" "[pi]"]]
+   [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]]
+   [["q" "[q]"]]])
 
-(defn help-line []
-  (str/join "  " (map second help-buttons)))
+(defn help-lines []
+  (map #(str/join "  " (map second %)) help-rows))
 
-;; Click hit-test: is x inside a button's range on the help line?
-(defn find-button-at [x]
-  (let [line (help-line)]
-    (some
-     (fn [[action display]]
-       (let [start (.indexOf line display)]
-         (when (and (>= x start)
-                    (< x (+ start (count display))))
-           action)))
-     help-buttons)))
+;; Terminal row of the top help line, given the current stack height.
+(def help-row0 (+ stack-height 5))
 
-;; Change sign of top stack value
-(defn chs [state]
-  (if (empty? (:stack state))
-    (assoc state :status "Stack empty")
-    (let [top    (peek (:stack state))
-          stack  (pop (:stack state))]
-      (assoc state :stack (conj stack (* -1 top))))))
+;; Which button (if any) sits at column x on help row y?
+(defn find-button-at [x y]
+  (let [row-idx (- y help-row0)]
+    (when (and (>= row-idx 0) (< row-idx (count help-rows)))
+      (let [row  (nth help-rows row-idx)
+            line (str/join "  " (map second row))]
+        (some
+         (fn [[action display]]
+           (let [start (.indexOf line display)]
+             (when (and (>= x start)
+                        (< x (+ start (count display))))
+               action)))
+         row)))))
 
 (defn handle-click [state x y]
-  ;; Help text position: title(1) + stack-lines(stack-height) + border(1) + blank(1) + input(2) + blank(2) = ~12 + stack-height
-  ;; Use a range that covers the help line area
-  (let [help-y (+ 1 stack-height 5)]  ;; Dynamic calculation based on stack height
-    (if (<= (- help-y 1) y (+ help-y 2))
-      (if-let [btn (find-button-at x)]
-        (case btn
-          "CHS"   [(chs state) nil]
-          "pi"    [(push-pi state) nil]
-          "clear" [(assoc state :stack []) nil]
-          "q"     [state program/quit-cmd]
-          "enter" (submit state)
-          [(execute-op state btn) nil])
-        [state nil])
-      [state nil])))  ;; Click outside button area, ignore
+  ;; Buttons are only shown when the help line isn't showing an error.
+  (let [btn (when (not (:status state))
+              (find-button-at x y))]
+    (if-let [btn btn]
+      (case btn
+        "CHS"   [(chs state) nil]
+        "pi"    [(push-pi state) nil]
+        "clear" [(assoc state :stack []) nil]
+        "drop"  [(drop-top state) nil]
+        "q"     [state program/quit-cmd]
+        "enter" (submit state)
+        [(execute-op state btn) nil])
+      [state nil])))
 
 ;; ------------------------------------------------------------
 ;; Charm state
@@ -184,7 +198,7 @@
   [{:stack  []
     :input  (text-input/text-input
              :prompt "> "
-             :placeholder "number, pi, +, -, *, /"
+             :placeholder "number, pi, chs, drop, +, -, *, /"
              :placeholder-style (style/style :faint true)
              :focused true
              :width 30)
@@ -268,7 +282,21 @@
       visible))))
 
 (defn view [state]
-  (let [stack (:stack state)]
+  (let [stack (:stack state)
+
+        ;; Help rows to display: normally the three button rows; when an
+        ;; error is showing, the error takes row 0 and the rest go blank.
+        rows (if-let [status (:status state)]
+               (cons (style/render error-style status)
+                     (repeat 2 ""))
+               (help-lines))
+
+        help (str/join "\n"
+                       (map (fn [ln]
+                              (if (empty? ln)
+                                ln
+                                (style/render help-style ln)))
+                            rows))]
 
     (str
 
@@ -290,13 +318,7 @@
       (:input state))
 
      "\n\n"
-
-     (if-let [status (:status state)]
-       (style/render error-style status)
-       (style/render
-        help-style
-        (help-line)))
-
+     help
      "\n")))
 
 
