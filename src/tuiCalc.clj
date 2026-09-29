@@ -184,10 +184,11 @@
            (= :left (:button message)))
       [(handle-click state (:x message) (:y message)) nil]
 
-      ;; Operators execute immediately (keyboard shortcuts, except - for negative numbers).
+      ;; Operators execute immediately (keyboard shortcuts, except - for
+      ;; negative numbers and x so words like "exit" can be typed).
       (and (msg/key-press? message)
            (contains? ops key)
-           (not (= key "-")))
+           (not (#{"-" "x"} key)))
       [(execute-op state key) nil]
 
       ;; Enter submits whatever is currently typed.
