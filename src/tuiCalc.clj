@@ -45,6 +45,10 @@
       (catch Exception _
         nil))))
 
+(defn parse-integer [s]
+  (when (and (string? s) (re-matches #"^-?\d+$" s))
+    (Integer/parseInt s)))
+
 (defn apply-op [stack op]
   (if (< (count stack) 2)
 
@@ -87,11 +91,63 @@
           stack (pop (:stack state))]
       (assoc state :stack (conj stack (* -1 top))))))
 
-;; Drop the top value off the stack (the HP's CLx).
-(defn drop-top [state]
+;; -------------------------------------------------------------
+;; Stack manipulation. The stack is a plain Clojure vector (top =
+;; last element); these are Clojure collection ops run on it.
+;; Indexed ops take an HP level: 0 = top (X), 1 = below (Y), ...;
+;; negative levels count up from the bottom. level->index maps a
+;; level to a vector index (nil when out of range).
+;; -------------------------------------------------------------
+
+(defn level->index [stack level]
+  (when (integer? level)
+    (let [n    (count stack)
+          vidx (if (neg? level)
+                 (- (abs level) 1)   ; -1 = bottom, -2 = second up, ...
+                 (- n 1 level))]     ;  0 = top, 1 = below it, ...
+      (when (and (>= vidx 0) (< vidx n))
+        vidx))))
+
+;; Remove the top value (Clojure pop; HP CLx). `drop` is an alias.
+(defn pop-top [state]
   (if (empty? (:stack state))
     (assoc state :status "Stack empty")
     (assoc state :stack (pop (:stack state)))))
+
+;; Show the top value without touching the stack (Clojure peek/last).
+;; Sets :info (not :status) so the buttons stay visible while the
+;; result lingers.
+(defn peek-top [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (assoc state :info (str "peek = " (peek (:stack state))))))
+
+;; Show the stack depth (Clojure count).
+(defn count-stack [state]
+  (assoc state :info (str "count = " (count (:stack state)))))
+
+;; Reverse the stack order (Clojure reverse).
+(defn reverse-stack [state]
+  (assoc state :stack (vec (reverse (:stack state)))))
+
+;; Push a copy of the value at level i (Clojure get/nth, HP levels).
+;; get 0 = dup, get 1 = roll, get -1 = bottom.
+(defn get-index [state i]
+  (let [stack (:stack state)]
+    (if-let [vi (level->index stack i)]
+      (update state :stack conj (nth stack vi))
+      (assoc state :status (str "No value at level " i)))))
+
+;; Remove the element at index vi from a vector.
+(defn remove-at [s vi]
+  (vec (concat (subvec s 0 vi) (subvec s (inc vi)))))
+
+;; Remove the value at level i (HP levels).
+(defn remove-index [state i]
+  (let [stack (:stack state)]
+    (if-let [vi (level->index stack i)]
+      (assoc state :stack (remove-at stack vi))
+      (assoc state :status (str "No value at level " i)))))
 
 ;; ------------------------------------------------------------
 ;; Process one entered token
@@ -99,13 +155,16 @@
 
 (defn submit [state]
   (let [raw   (str/trim (text-input/value (:input state)))
-        ;; Match commands case-insensitively (CHS, CLEAR, Q, ...).
-        token (str/lower-case raw)
 
-        ;; Clear the input after Enter.
+        ;; Split into the command word and any argument.
+        [head & rest] (str/split raw #"\s+")
+        token        (str/lower-case head)
+
+        ;; Clear the input after Enter, plus any stale status/info.
         state (assoc state
                      :input (text-input/reset (:input state))
-                     :status nil)]
+                     :status nil
+                     :info nil)]
 
     (cond
 
@@ -125,9 +184,35 @@
       (= token "chs")
       [(chs state) nil]
 
-      ;; Drop the top value off the stack.
-      (= token "drop")
-      [(drop-top state) nil]
+      ;; Pop the top value (drop is an alias).
+      (#{"drop" "pop"} token)
+      [(pop-top state) nil]
+
+      ;; Peek the top value.
+      (= token "peek")
+      [(peek-top state) nil]
+
+      ;; Show the stack depth.
+      (= token "count")
+      [(count-stack state) nil]
+
+      ;; Reverse the stack.
+      (= token "reverse")
+      [(reverse-stack state) nil]
+
+      ;; Get the value at level <i> (dup/roll).
+      (#{"get" "nth"} token)
+      (let [i (parse-integer (first rest))]
+        (if i
+          [(get-index state i) nil]
+          [(assoc state :status (str "Need a level after " token)) nil]))
+
+      ;; Remove the value at level <i>.
+      (= token "remove")
+      (let [i (parse-integer (first rest))]
+        (if i
+          [(remove-index state i) nil]
+          [(assoc state :status "Need a level after remove") nil]))
 
       ;; Arithmetic operator.
       (contains? ops token)
@@ -152,13 +237,19 @@
 ;; labels and positions can never drift apart.
 (def help-rows
   [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["CHS" "[CHS]"] ["pi" "[pi]"]]
-   [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]]
+   [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
+    ["peek" "[peek]"] ["count" "[count]"] ["reverse" "[reverse]"]]
    [["q" "[q]"]]])
 
 (defn help-lines []
   (map #(str/join "  " (map second %)) help-rows))
 
-;; Terminal row of the top help line, given the current stack height.
+;; Terminal row (0-based) of the top help line.
+;; Layout: title(1) + stack(stack-height) + border(1) + blank(1) +
+;; input(1) + info(1) = stack-height + 5 rows before the first help
+;; line. The info line is always rendered (blank when empty) so this
+;; stays fixed. (See the render-position test -- a miscount here
+;; breaks every click silently.)
 (def help-row0 (+ stack-height 5))
 
 ;; Which button (if any) sits at column x on help row y?
@@ -186,12 +277,15 @@
               (find-button-at x y))]
     (if-let [btn btn]
       (case btn
-        "CHS"   [(chs state) nil]
-        "pi"    [(push-pi state) nil]
-        "clear" [(assoc state :stack []) nil]
-        "drop"  [(drop-top state) nil]
-        "q"     [state program/quit-cmd]
-        "enter" (submit state)
+        "CHS"     [(chs state) nil]
+        "pi"      [(push-pi state) nil]
+        "clear"   [(assoc state :stack []) nil]
+        "drop"    [(pop-top state) nil]
+        "peek"    [(peek-top state) nil]
+        "count"   [(count-stack state) nil]
+        "reverse" [(reverse-stack state) nil]
+        "q"       [state program/quit-cmd]
+        "enter"   (submit state)
         [(execute-op state btn) nil])
       [state nil])))
 
@@ -203,11 +297,12 @@
   [{:stack  []
     :input  (text-input/text-input
              :prompt "> "
-             :placeholder "number, pi, chs, drop, +, -, *, /"
+             :placeholder "number, pi, chs, drop, peek, get 0, +, -, *"
              :placeholder-style (style/style :faint true)
              :focused true
              :width 30)
-    :status nil}
+    :status nil
+    :info   nil}
    nil])
 
 
@@ -268,6 +363,10 @@
   (style/style
    :fg style/red))
 
+(def info-style
+  (style/style
+   :fg style/green))
+
 (defn stack-lines [stack]
   (let [visible (vec (take-last stack-height stack))
         blanks  (- stack-height
@@ -301,7 +400,13 @@
                               (if (empty? ln)
                                 ln
                                 (style/render help-style ln)))
-                            rows))]
+                            rows))
+
+        ;; Probe result (peek/count), always one line so the help rows
+        ;; -- and their click positions -- never move.
+        info-line (if-let [info (:info state)]
+                    (style/render info-style info)
+                    "")]
 
     (str
 
@@ -322,7 +427,11 @@
      (text-input/text-input-view
       (:input state))
 
-     "\n\n"
+     ;; Reserved probe line (blank unless a probe is showing).
+     "\n"
+     info-line
+     "\n"
+
      help
      "\n")))
 
