@@ -238,8 +238,13 @@
 (def help-rows
   [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["CHS" "[CHS]"] ["pi" "[pi]"]]
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
-    ["peek" "[peek]"] ["count" "[count]"] ["reverse" "[reverse]"]]
+    ["peek" "[peek]"] ["count" "[count]"] ["reverse" "[reverse]"]
+    ["get" "[GET]"]]
    [["q" "[q]"]]])
+
+;; Faint legend under the buttons.
+(def hint-line
+  "^x drop ^s chs ^t peek ^n count ^r rev ^l clear ^p pi ^g get")
 
 (defn help-lines []
   (map #(str/join "  " (map second %)) help-rows))
@@ -271,22 +276,88 @@
                action)))
          row)))))
 
+;; -------------------------------------------------------------
+;; Button "flash" -- a rainbow sweep over ~2s so a screen-share
+;; audience can see what was activated. A cmd sleeps flash-ms and
+;; re-injects a :flash-tick message; each tick advances the hue and
+;; schedules the next until flash-frames is exhausted.
+;; -------------------------------------------------------------
+
+(def flash-frames 40)
+(def flash-ms 50)
+
+;; h in degrees -> [r g b] 0-255 (full saturation).
+;; x is a 1..0..1 triangle wave across each 60-degree sector.
+(defn hue->rgb [h]
+  (let [h (mod h 360.0)
+        x (- 1.0 (Math/abs (- (mod (/ h 60.0) 2.0) 1.0)))
+        [r g b] (cond
+                  (< h 60)  [1 x 0]
+                  (< h 120) [x 1 0]
+                  (< h 180) [0 1 x]
+                  (< h 240) [0 x 1]
+                  (< h 300) [x 0 1]
+                  :else     [1 0 x])]
+    [(* 255 r) (* 255 g) (* 255 b)]))
+
+(defn flash-color [frame]
+  (let [[r g b] (hue->rgb (* (/ (double frame) flash-frames) 360.0))]
+    (style/rgb (int r) (int g) (int b))))
+
+(defn flash-cmd []
+  (program/cmd
+   (fn []
+     (Thread/sleep flash-ms)
+     {:type :flash-tick})))
+
+(defn with-flash [state action]
+  (assoc state :flash {:action action :frame 0}))
+
+;; Insert a text prefix into the input box (for argument-taking
+;; commands like "get " / "remove " that are finished by the user).
+(defn insert-prefix [state text]
+  (let [[input cmd] (text-input/text-input-update
+                     (:input state)
+                     (msg/key-press text))]
+    [(assoc state :input input) cmd]))
+
+;; Run a button action (shared by mouse clicks and keyboard shortcuts).
+;; Returns [new-state command]. The caller adds the flash on top.
+(defn run-action [state action]
+  (case action
+    "CHS"     [(chs state) nil]
+    "pi"      [(push-pi state) nil]
+    "clear"   [(assoc state :stack []) nil]
+    "drop"    [(pop-top state) nil]
+    "peek"    [(peek-top state) nil]
+    "count"   [(count-stack state) nil]
+    "reverse" [(reverse-stack state) nil]
+    "get"     (insert-prefix state "get ")
+    "remove"  (insert-prefix state "remove ")
+    "q"       [state program/quit-cmd]
+    "enter"   (submit state)
+    [(execute-op state action) nil]))
+
+;; Ctrl-key shortcuts (no ctrl conflicts with the text input's own
+;; bindings -- it uses ctrl a b d e f h k u w). Values are actions, so
+;; they share run-action with the buttons and flash identically.
+(def shortcuts
+  {"x" "drop"
+   "s" "CHS"
+   "t" "peek"
+   "n" "count"
+   "r" "reverse"
+   "l" "clear"
+   "p" "pi"
+   "g" "get"})
+
 (defn handle-click [state x y]
   ;; Buttons are only shown when the help line isn't showing an error.
   (let [btn (when (not (:status state))
               (find-button-at x y))]
-    (if-let [btn btn]
-      (case btn
-        "CHS"     [(chs state) nil]
-        "pi"      [(push-pi state) nil]
-        "clear"   [(assoc state :stack []) nil]
-        "drop"    [(pop-top state) nil]
-        "peek"    [(peek-top state) nil]
-        "count"   [(count-stack state) nil]
-        "reverse" [(reverse-stack state) nil]
-        "q"       [state program/quit-cmd]
-        "enter"   (submit state)
-        [(execute-op state btn) nil])
+    (if btn
+      (let [[s' c'] (run-action state btn)]
+        [(with-flash s' btn) (or c' (flash-cmd))])
       [state nil])))
 
 ;; ------------------------------------------------------------
@@ -318,15 +389,32 @@
       (msg/key-match? message "ctrl+c")
       [state program/quit-cmd]
 
+      ;; Advance (or end) an in-flight button flash.
+      (= :flash-tick (:type message))
+      (let [flash (:flash state)]
+        (if (and flash (< (inc (:frame flash)) flash-frames))
+          [(assoc state :flash (update flash :frame inc)) (flash-cmd)]
+          [(dissoc state :flash) nil]))
+
       ;; Mouse clicks on help-line buttons.
       (and (msg/mouse? message)
            (= :press (:action message))
            (= :left (:button message)))
       (handle-click state (:x message) (:y message))
 
+      ;; Ctrl-key shortcuts (drop, CHS, peek, ...).
+      (and (msg/key-press? message)
+           (:ctrl message)
+           (string? key)
+           (contains? shortcuts key))
+      (let [action (shortcuts key)
+            [s' c'] (run-action state action)]
+        [(with-flash s' action) (or c' (flash-cmd))])
+
       ;; Operators execute immediately (keyboard shortcuts, except - for
       ;; negative numbers and x so words like "exit" can be typed).
       (and (msg/key-press? message)
+           (not (:ctrl message))
            (contains? ops key)
            (not (#{"-" "x"} key)))
       [(execute-op state key) nil]
@@ -357,7 +445,7 @@
 
 (def help-style
   (style/style
-   :fg 240))
+   :fg (style/ansi256 240)))
 
 (def error-style
   (style/style
@@ -366,6 +454,20 @@
 (def info-style
   (style/style
    :fg style/green))
+
+(defn render-buttons-row [row flash]
+  ;; Each button is rendered separately so the flashing one can get a
+  ;; different color; joining the styled strings is safe (they balance).
+  (str/join "  "
+            (map (fn [[action display]]
+                   (style/render
+                    (if (= (:action flash) action)
+                      (style/style
+                       :fg (flash-color (:frame flash))
+                       :bold true)
+                      help-style)
+                    display))
+                 row)))
 
 (defn stack-lines [stack]
   (let [visible (vec (take-last stack-height stack))
@@ -388,19 +490,15 @@
 (defn view [state]
   (let [stack (:stack state)
 
-        ;; Help rows to display: normally the three button rows; when an
-        ;; error is showing, the error takes row 0 and the rest go blank.
-        rows (if-let [status (:status state)]
-               (cons (style/render error-style status)
-                     (repeat 2 ""))
-               (help-lines))
+        ;; Help rows: the button rows (each button styled on its own so
+        ;; the flashing one can change color); when an error is
+        ;; showing, the error takes row 0 and the rest go blank.
+        rows (if (:status state)
+               (cons (style/render error-style (:status state))
+                     (repeat (dec (count help-rows)) ""))
+               (map #(render-buttons-row % (:flash state)) help-rows))
 
-        help (str/join "\n"
-                       (map (fn [ln]
-                              (if (empty? ln)
-                                ln
-                                (style/render help-style ln)))
-                            rows))
+        help (str/join "\n" rows)
 
         ;; Probe result (peek/count), always one line so the help rows
         ;; -- and their click positions -- never move.
@@ -433,6 +531,10 @@
      "\n"
 
      help
+     "\n"
+
+     ;; Keyboard-shortcut legend (always one line, never clickable).
+     (style/render help-style hint-line)
      "\n")))
 
 
