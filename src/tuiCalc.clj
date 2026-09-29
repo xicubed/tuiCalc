@@ -417,11 +417,13 @@
            (not (:ctrl message))
            (contains? ops key)
            (not (#{"-" "x"} key)))
-      [(execute-op state key) nil]
+      (let [s' (execute-op state key)]
+        [(with-flash s' key) (flash-cmd)])
 
-      ;; Enter submits whatever is currently typed.
+      ;; Enter submits whatever is currently typed (flashes [ENTER]).
       (msg/key-match? message :enter)
-      (submit state)
+      (let [[s' c'] (submit state)]
+        [(with-flash s' "enter") (or c' (flash-cmd))])
 
       ;; Everything else goes into the text field.
       :else
