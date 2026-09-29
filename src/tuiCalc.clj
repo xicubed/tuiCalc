@@ -8,6 +8,9 @@
    [charm.style.core :as style]
    [clojure.string :as str]))
 
+;; NOTE (babashka): defn bodies are analyzed at load time, so each
+;; function must appear *after* the things it calls. Keep this order.
+
 (def stack-height 8)
 
 ;; ------------------------------------------------------------
@@ -76,72 +79,6 @@
 (defn push-pi [state]
   (update (commit-input state) :stack conj Math/PI))
 
-;; Help-line buttons: [action display] pairs.
-;; Rendered into the help line and used for click hit-testing,
-;; so labels and positions can never drift apart.
-(def help-buttons
-  [["+" "[+]"]
-   ["-" "[-]"]
-   ["*" "[*]"]
-   ["/" "[/]"]
-   ["CHS" "[CHS]"]
-   ["pi" "[pi]"]
-   ["clear" "[clear]"]
-   ["q" "[q]"]])
-
-(defn help-line []
-  (str/join "  " (map second help-buttons)))
-
-;; Click hit-test: is x inside a button's range on the help line?
-(defn find-button-at [x]
-  (let [line (help-line)]
-    (some
-     (fn [[action display]]
-       (let [start (.indexOf line display)]
-         (when (and (>= x start)
-                    (< x (+ start (count display))))
-           action)))
-     help-buttons)))
-
-;; Change sign of top stack value
-(defn chs [state]
-  (if (empty? (:stack state))
-    (assoc state :status "Stack empty")
-    (let [top    (peek (:stack state))
-          stack  (pop (:stack state))]
-      (assoc state :stack (conj stack (* -1 top))))))
-
-(defn handle-click [state x y]
-  ;; Help text position: title(1) + stack-lines(stack-height) + border(1) + blank(1) + input(2) + blank(2) = ~12 + stack-height
-  ;; Use a range that covers the help line area
-  (let [help-y (+ 1 stack-height 5)]  ;; Dynamic calculation based on stack height
-    (if (<= (- help-y 1) y (+ help-y 2))
-      (if-let [btn (find-button-at x)]
-        (case btn
-          "CHS"   [(chs state) nil]
-          "pi"    [(push-pi state) nil]
-          "clear" [(assoc state :stack []) nil]
-          "q"     [state program/quit-cmd]
-          [(execute-op state btn) nil])
-        [state nil])
-      [state nil])))  ;; Click outside button area, ignore
-
-;; ------------------------------------------------------------
-;; Charm state
-;; ------------------------------------------------------------
-
-(defn init []
-  [{:stack  []
-    :input  (text-input/text-input
-             :prompt "> "
-             :placeholder "number, pi, +, -, *, /"
-             :placeholder-style (style/style :faint true)
-             :focused true
-             :width 30)
-    :status nil}
-   nil])
-
-
 ;; ------------------------------------------------------------
 ;; Process one entered token
 ;; ------------------------------------------------------------
@@ -186,6 +123,73 @@
         [(assoc state
                 :status (str "Unknown: " token))
          nil]))))
+
+;; Help-line buttons: [action display] pairs.
+;; Rendered into the help line and used for click hit-testing,
+;; so labels and positions can never drift apart.
+(def help-buttons
+  [["+" "[+]"]
+   ["-" "[-]"]
+   ["*" "[*]"]
+   ["/" "[/]"]
+   ["CHS" "[CHS]"]
+   ["pi" "[pi]"]
+   ["clear" "[clear]"]
+   ["q" "[q]"]
+   ["enter" "[ENTER]"]])
+
+(defn help-line []
+  (str/join "  " (map second help-buttons)))
+
+;; Click hit-test: is x inside a button's range on the help line?
+(defn find-button-at [x]
+  (let [line (help-line)]
+    (some
+     (fn [[action display]]
+       (let [start (.indexOf line display)]
+         (when (and (>= x start)
+                    (< x (+ start (count display))))
+           action)))
+     help-buttons)))
+
+;; Change sign of top stack value
+(defn chs [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (let [top    (peek (:stack state))
+          stack  (pop (:stack state))]
+      (assoc state :stack (conj stack (* -1 top))))))
+
+(defn handle-click [state x y]
+  ;; Help text position: title(1) + stack-lines(stack-height) + border(1) + blank(1) + input(2) + blank(2) = ~12 + stack-height
+  ;; Use a range that covers the help line area
+  (let [help-y (+ 1 stack-height 5)]  ;; Dynamic calculation based on stack height
+    (if (<= (- help-y 1) y (+ help-y 2))
+      (if-let [btn (find-button-at x)]
+        (case btn
+          "CHS"   [(chs state) nil]
+          "pi"    [(push-pi state) nil]
+          "clear" [(assoc state :stack []) nil]
+          "q"     [state program/quit-cmd]
+          "enter" (submit state)
+          [(execute-op state btn) nil])
+        [state nil])
+      [state nil])))  ;; Click outside button area, ignore
+
+;; ------------------------------------------------------------
+;; Charm state
+;; ------------------------------------------------------------
+
+(defn init []
+  [{:stack  []
+    :input  (text-input/text-input
+             :prompt "> "
+             :placeholder "number, pi, +, -, *, /"
+             :placeholder-style (style/style :faint true)
+             :focused true
+             :width 30)
+    :status nil}
+   nil])
 
 
 ;; ------------------------------------------------------------
