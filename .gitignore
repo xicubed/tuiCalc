@@ -96,3 +96,6 @@ pom.xml.asc
 /.clj-kondo/
 /.lsp/
 /.claude/
+
+# macOS
+.DS_Store
