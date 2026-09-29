@@ -162,8 +162,13 @@
 (def help-row0 (+ stack-height 5))
 
 ;; Which button (if any) sits at column x on help row y?
+;; charm passes the terminal's raw 1-based mouse coords (top row is y=1,
+;; leftmost column is x=1); help-row0 and indexOf are 0-based, so
+;; normalize here.
 (defn find-button-at [x y]
-  (let [row-idx (- y help-row0)]
+  (let [x       (dec x)
+        y       (dec y)
+        row-idx (- y help-row0)]
     (when (and (>= row-idx 0) (< row-idx (count help-rows)))
       (let [row  (nth help-rows row-idx)
             line (str/join "  " (map second row))]
