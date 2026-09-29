@@ -351,13 +351,45 @@
    "p" "pi"
    "g" "get"})
 
+;; Which button a typed command corresponds to (so pressing Enter
+;; flashes the button that actually ran, not just [ENTER]). Nil for
+;; tokens with no button (numbers, "get 0", unknown, ...).
+(defn button-for-token [token]
+  (condp = token
+    "chs" "CHS"
+    "pi" "pi"
+    "clear" "clear"
+    "q" "q" "quit" "q" "exit" "q"
+    "drop" "drop" "pop" "drop"
+    "peek" "peek"
+    "count" "count"
+    "reverse" "reverse"
+    (when (and (string? token) (contains? ops token))
+      ;; "x" is an ops alias for the "*" button.
+      (if (= token "x") "*" token))))
+
+;; The button that should flash for an activation. For "enter" (key
+;; or click), the pending input decides: typing "chs" then Enter
+;; flashes [CHS], a bare number flashes [ENTER]. Must be called with
+;; the PRE-action state, since submit clears the input.
+(defn flash-for-action [state action]
+  (if (= action "enter")
+    (or (let [head (str/lower-case
+                    (first (str/split
+                            (str/trim (text-input/value (:input state)))
+                            #"\s+")))]
+          (button-for-token head))
+        "enter")
+    action))
+
 (defn handle-click [state x y]
   ;; Buttons are only shown when the help line isn't showing an error.
   (let [btn (when (not (:status state))
               (find-button-at x y))]
     (if btn
       (let [[s' c'] (run-action state btn)]
-        [(with-flash s' btn) (or c' (flash-cmd))])
+        [(with-flash s' (flash-for-action state btn))
+         (or c' (flash-cmd))])
       [state nil])))
 
 ;; ------------------------------------------------------------
@@ -420,10 +452,13 @@
       (let [s' (execute-op state key)]
         [(with-flash s' key) (flash-cmd)])
 
-      ;; Enter submits whatever is currently typed (flashes [ENTER]).
+      ;; Enter submits whatever is currently typed. Flash the button
+      ;; that corresponds to what actually ran ([CHS] for "chs",
+      ;; [ENTER] for a bare number).
       (msg/key-match? message :enter)
       (let [[s' c'] (submit state)]
-        [(with-flash s' "enter") (or c' (flash-cmd))])
+        [(with-flash s' (flash-for-action state "enter"))
+         (or c' (flash-cmd))])
 
       ;; Everything else goes into the text field.
       :else
