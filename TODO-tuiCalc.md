@@ -45,4 +45,9 @@ a divisor.
 - `parse-number`'s try/catch around `parse-double` (line 40-43) is
   likely dead code — Clojure 1.11 `parse-double` returns nil rather
   than throwing.
-- Quit/clear commands are case-sensitive ("Q", "CLEAR" don't work).
+- ~~Quit/clear commands are case-sensitive~~ ✅ FIXED (submit now
+  lowercases the token before matching, so `Q`, `CLEAR`, `CHS`, ... all
+  work; the `Unknown:` message still shows the original casing).
+- **Stretch:** mirror more clojure vector stack ops — `pop`, `get`/
+  `nth` (index into the stack), `peek`. `drop` is the first one in;
+  the `help-rows` table + case dispatch make adding them cheap.
