@@ -13,6 +13,12 @@
 
 (def stack-height 8)
 
+;; Normal input-box prompt/placeholder; the two-step level prompt
+;; swaps both out.
+(def input-prompt "> ")
+(def input-placeholder "number, pi, chs, drop, peek, get 0, +, -, *")
+(def level-placeholder "level: 0=top, 1=below, -1=bottom")
+
 ;; ------------------------------------------------------------
 ;; Calculator engine
 ;; ------------------------------------------------------------
@@ -149,6 +155,28 @@
       (assoc state :stack (remove-at stack vi))
       (assoc state :status (str "No value at level " i)))))
 
+;; Start a two-step level prompt (get?/remove?): the input box
+;; becomes "get? " / "remove? " and the next integer is the level.
+(defn start-level-prompt [state pending prompt-str]
+  (assoc state
+         :pending pending
+         :input (-> (:input state)
+                    text-input/reset
+                    (assoc :prompt prompt-str)
+                    (assoc :placeholder level-placeholder))))
+
+;; Cancel a two-step level prompt (get?/remove?) if one is active:
+;; drop the pending flag, restore the normal prompt/placeholder, and
+;; discard the half-typed level so it can't leak into the next command.
+(defn abort-prompt [state]
+  (-> state
+      (dissoc :pending)
+      (update :input (fn [inp]
+                       (-> inp
+                           text-input/reset
+                           (assoc :prompt input-prompt)
+                           (assoc :placeholder input-placeholder))))))
+
 ;; ------------------------------------------------------------
 ;; Process one entered token
 ;; ------------------------------------------------------------
@@ -159,14 +187,27 @@
         ;; Split into the command word and any argument.
         [head & rest] (str/split raw #"\s+")
         token        (str/lower-case head)
+        pending      (:pending state)
 
-        ;; Clear the input after Enter, plus any stale status/info.
+        ;; Clear the input (and restore its prompt) after Enter, plus
+        ;; any stale status/info/pending.
         state (assoc state
-                     :input (text-input/reset (:input state))
+                     :input (-> (text-input/reset (:input state))
+                                (assoc :prompt input-prompt)
+                                (assoc :placeholder input-placeholder))
                      :status nil
-                     :info nil)]
+                     :info nil
+                     :pending nil)]
 
     (cond
+
+      ;; Two-step prompt level: head is the LEVEL for the pending
+      ;; get/nth/remove. (Non-integer input cancels the prompt and
+      ;; falls through to be handled as a normal command.)
+      (and pending (parse-integer head))
+      (case pending
+        "get"    [(get-index state (parse-integer head)) nil]
+        "remove" [(remove-index state (parse-integer head)) nil])
 
       ;; Empty Enter -- do nothing.
       (str/blank? raw)
@@ -200,19 +241,20 @@
       (= token "reverse")
       [(reverse-stack state) nil]
 
-      ;; Get the value at level <i> (dup/roll).
+      ;; Get the value at level <i> (dup/roll). No level yet: start a
+      ;; two-step prompt -- the input box itself becomes "get? " and
+      ;; you type the level (0=top, 1=below, -1=bottom), then Enter.
+      ;; Any other input cancels the prompt and runs as a command.
       (#{"get" "nth"} token)
-      (let [i (parse-integer (first rest))]
-        (if i
-          [(get-index state i) nil]
-          [(assoc state :status (str "Need a level after " token)) nil]))
+      (if-let [i (parse-integer (first rest))]
+        [(get-index state i) nil]
+        [(start-level-prompt state "get" (str token "? ")) nil])
 
-      ;; Remove the value at level <i>.
+      ;; Remove the value at level <i>. Same two-step prompt.
       (= token "remove")
-      (let [i (parse-integer (first rest))]
-        (if i
-          [(remove-index state i) nil]
-          [(assoc state :status "Need a level after remove") nil]))
+      (if-let [i (parse-integer (first rest))]
+        [(remove-index state i) nil]
+        [(start-level-prompt state "remove" "remove? ") nil])
 
       ;; Arithmetic operator.
       (contains? ops token)
@@ -313,16 +355,9 @@
 (defn with-flash [state action]
   (assoc state :flash {:action action :frame 0}))
 
-;; Insert a text prefix into the input box (for argument-taking
-;; commands like "get " / "remove " that are finished by the user).
-(defn insert-prefix [state text]
-  (let [[input cmd] (text-input/text-input-update
-                     (:input state)
-                     (msg/key-press text))]
-    [(assoc state :input input) cmd]))
-
 ;; Run a button action (shared by mouse clicks and keyboard shortcuts).
 ;; Returns [new-state command]. The caller adds the flash on top.
+;; Any action other than [GET] cancels a pending level prompt.
 (defn run-action [state action]
   (case action
     "CHS"     [(chs state) nil]
@@ -332,8 +367,7 @@
     "peek"    [(peek-top state) nil]
     "count"   [(count-stack state) nil]
     "reverse" [(reverse-stack state) nil]
-    "get"     (insert-prefix state "get ")
-    "remove"  (insert-prefix state "remove ")
+    "get"     [(start-level-prompt state "get" "get? ") nil]
     "q"       [state program/quit-cmd]
     "enter"   (submit state)
     [(execute-op state action) nil]))
@@ -353,7 +387,7 @@
 
 ;; Which button a typed command corresponds to (so pressing Enter
 ;; flashes the button that actually ran, not just [ENTER]). Nil for
-;; tokens with no button (numbers, "get 0", unknown, ...).
+;; tokens with no button (numbers, unknown, ...).
 (defn button-for-token [token]
   (condp = token
     "chs" "CHS"
@@ -364,22 +398,29 @@
     "peek" "peek"
     "count" "count"
     "reverse" "reverse"
+    "get" "get" "nth" "get" "remove" "get"
     (when (and (string? token) (contains? ops token))
       ;; "x" is an ops alias for the "*" button.
       (if (= token "x") "*" token))))
 
 ;; The button that should flash for an activation. For "enter" (key
 ;; or click), the pending input decides: typing "chs" then Enter
-;; flashes [CHS], a bare number flashes [ENTER]. Must be called with
-;; the PRE-action state, since submit clears the input.
+;; flashes [CHS], a bare number flashes [ENTER]. A level typed into
+;; a two-step get?/remove? prompt flashes [GET] -- but if the prompt
+;; is active and the input is NOT a level, the prompt is cancelled
+;; and the input runs as a normal command, so THAT button flashes.
+;; Must be called with the PRE-action state, since submit clears the
+;; input.
 (defn flash-for-action [state action]
   (if (= action "enter")
-    (or (let [head (str/lower-case
-                    (first (str/split
-                            (str/trim (text-input/value (:input state)))
-                            #"\s+")))]
-          (button-for-token head))
-        "enter")
+    (let [head (str/lower-case
+                (first (str/split
+                        (str/trim (text-input/value (:input state)))
+                        #"\s+")))]
+      (if (and (:pending state) (parse-integer head))
+        "get"
+        (or (button-for-token head)
+            "enter")))
     action))
 
 (defn handle-click [state x y]
@@ -387,7 +428,16 @@
   (let [btn (when (not (:status state))
               (find-button-at x y))]
     (if btn
-      (let [[s' c'] (run-action state btn)]
+      ;; A pending level prompt is abandoned when a DIFFERENT button is
+      ;; clicked; [ENTER] finishes the prompt; [GET] keeps it going.
+      (let [state (if (and (:pending state)
+                           (not= btn "enter")
+                           (not= btn "get"))
+                    (abort-prompt state)
+                    state)
+            [s' c'] (if (and (:pending state) (= btn "get"))
+                      [state nil]
+                      (run-action state btn))]
         [(with-flash s' (flash-for-action state btn))
          (or c' (flash-cmd))])
       [state nil])))
@@ -399,13 +449,14 @@
 (defn init []
   [{:stack  []
     :input  (text-input/text-input
-             :prompt "> "
-             :placeholder "number, pi, chs, drop, peek, get 0, +, -, *"
+             :prompt input-prompt
+             :placeholder input-placeholder
              :placeholder-style (style/style :faint true)
              :focused true
              :width 30)
-    :status nil
-    :info   nil}
+    :status  nil
+    :info    nil
+    :pending nil}
    nil])
 
 
@@ -434,22 +485,37 @@
            (= :left (:button message)))
       (handle-click state (:x message) (:y message))
 
-      ;; Ctrl-key shortcuts (drop, CHS, peek, ...).
+      ;; Esc cancels a two-step level prompt (get?/remove?).
+      (and (:pending state)
+           (= :escape key))
+      [(abort-prompt state) nil]
+
+      ;; Ctrl-key shortcuts (drop, CHS, peek, ...). ^g keeps/starts
+      ;; the prompt; everything else abandons it (discarding the
+      ;; half-typed level).
       (and (msg/key-press? message)
            (:ctrl message)
            (string? key)
            (contains? shortcuts key))
       (let [action (shortcuts key)
             [s' c'] (run-action state action)]
-        [(with-flash s' action) (or c' (flash-cmd))])
+        [(with-flash
+          (if (= action "get") s' (abort-prompt s'))
+          action)
+         (or c' (flash-cmd))])
 
       ;; Operators execute immediately (keyboard shortcuts, except - for
       ;; negative numbers and x so words like "exit" can be typed).
+      ;; Abandons a pending level prompt, discarding the half-typed
+      ;; level so it can't be committed as a number.
       (and (msg/key-press? message)
            (not (:ctrl message))
            (contains? ops key)
            (not (#{"-" "x"} key)))
-      (let [s' (execute-op state key)]
+      (let [s' (execute-op (if (:pending state)
+                             (abort-prompt state)
+                             state)
+                           key)]
         [(with-flash s' key) (flash-cmd)])
 
       ;; Enter submits whatever is currently typed. Flash the button
