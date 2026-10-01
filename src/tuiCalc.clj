@@ -209,9 +209,12 @@
         "get"    [(get-index state (parse-integer head)) nil]
         "remove" [(remove-index state (parse-integer head)) nil])
 
-      ;; Empty Enter -- do nothing.
+      ;; Empty Enter -- dup the top value (HP ENTER key). With an
+      ;; empty stack it's a no-op.
       (str/blank? raw)
-      [state nil]
+      (if (empty? (:stack state))
+        [state nil]
+        [(get-index state 0) nil])
 
       ;; Quit commands.
       (#{"q" "quit" "exit"} token)
