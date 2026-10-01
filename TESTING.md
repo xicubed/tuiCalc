@@ -80,6 +80,28 @@ are hitting one of these:
    (`[3.0 6.0]`) to match how the app actually feeds the stack. Don't assert
    `[42]` where the app produces `[42.0]` (or `[9]` where it yields `[9.0]`).
 
+6. **bb's `clojure.test` is stripped.** No `t/add-report`, no `t/all-tests` —
+   the "one line per test" output at the bottom of the test file is a small
+   hand-rolled runner, and it exists precisely because of this. The pieces it
+   relies on, each verified against bb 1.13.220:
+
+   - Discover test vars via
+     `(->> (ns-publics 'the-ns) (vals) (filter (comp :test meta)))` —
+     `deftest` tags its var's meta with `:test`.
+   - `name` **does not work** on a sci `Var` (ClassCastException) — read the
+     name from `(get (meta var) :name)`.
+   - `t/run-test-var` returns a summary map whose `:fail`/`:error` counts tell
+     you whether that test passed; it is silent about the test *body*'s
+     output unless you capture it.
+   - `clojure.test` writes the `FAIL in (...)` detail to `t/*test-out*`,
+     **not** `*out*`. To capture it, bind `t/*test-out*` to a
+     `java.io.StringWriter` around the call — binding `*out*` captures
+     nothing (this tripped me up; the per-test runner's `run-one` does this).
+
+   Don't replace the hand-rolled runner with `t/run-tests` alone: that only
+   prints the final summary, so a passing run shows no per-test lines and a
+   screen-share viewer sees nothing until the very end.
+
 ## 2. Manual TUI check
 
 The unit tests can't see the rendering, the button flash, or the mouse. For
