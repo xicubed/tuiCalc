@@ -9,7 +9,19 @@ This has been a test of different LLM models.
 
 ## Run
 
+You need [babashka](https://babashka.org/) (bb) — on macOS:
+
 ```
+brew install babashka        # or: brew upgrade babashka
+bb --version                 # v1.13.x
+```
+
+No other setup: the charm dependency is pinned in `bb.edn` and fetched
+automatically on first run.
+
+```
+git clone <repo>
+cd fizz
 bb ./src/tuiCalc.clj
 ```
 
@@ -50,22 +62,35 @@ Notes:
 - Errors (e.g. `Need two values`) show above the buttons and clear on the
   next action.
 
-## Tests
+## Testing
 
-```
-bb test
-```
+**Unit** — `bb test` runs the suite in `test/tuiCalc_test.clj`, prints the
+`clojure.test` summary, exits non-zero on failure. **TESTING.md** has how to
+add tests and the babashka gotchas — read it before changing `src/tuiCalc.clj`.
 
-Runs the unit suite (`test/tuiCalc_test.clj`), prints the `clojure.test`
-summary, exits non-zero on failure. See **TESTING.md** for how to add tests
-and the babashka gotchas — read it before changing `src/tuiCalc.clj`.
+**Manual** — the unit tests can't see rendering, the flash, or the mouse, so
+after a change run the TUI and smoke-test it:
+
+1. `bb ./src/tuiCalc.clj`
+2. `4` Enter, `5` Enter, click `[+]` → `9.0`
+3. Enter with the box **empty** → `9.0` dups (bare ENTER = HP ENTER)
+4. `^s` (CHS) → top flips to `-9.0`; the `[CHS]` button flashes
+5. `get` Enter, `0` Enter → copies top again; `remove` Enter, `0` Enter removes it
+6. `^t` (peek) / `^n` (count) → info line, stack untouched
+7. `q` Enter → quit
+
+Watch for: the stack growing **upward**, the right button flashing on every
+action, and the help rows not shifting (a layout miscount breaks click
+positions). Full checklist: **TESTING.md**.
 
 ## TODO
 
 More Clojure stack/vector manipulation functions to get a playground feel for
 how they work — not to mention map/reduce :>
 
-Open bugs from code review: **TODO-tuiCalc.md**.
+Known bugs from code review: **TODO-tuiCalc.md** (item 1 fixed; open:
+pending text dropped on operator keypress, `ieee-div` sign for negative-zero
+divisor, plus a few minor ones).
 
 ## Notes for contributors (and for Claude)
 
