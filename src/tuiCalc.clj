@@ -656,4 +656,9 @@
     :alt-screen true
     :mouse :normal}))  ; Enable mouse clicks
 
-(apply -main *command-line-args*)
+;; Auto-start only when tuiCalc is the ENTRY script, not when a test
+;; (or anything else) merely requires the ns. While tuiCalc is being
+;; loaded, *file* is tuiCalc.clj; babashka.file is the entry file. They
+;; match only when we were launched directly.
+(when (= (str *file*) (System/getProperty "babashka.file"))
+  (apply -main *command-line-args*))
