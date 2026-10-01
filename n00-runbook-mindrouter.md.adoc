@@ -1,0 +1,58 @@
+# n00-runbook-mindrouter
+
+Per-project routing of Claude Code to local models (Ollama/LM Studio/llama.cpp),
+isolated per repo via direnv so it never leaks into normal Anthropic sessions.
+
+## One-time setup (zsh + direnv)
+
+0. Note i havent installed direnv, for now just run from the ~/exp/fizz
+export ANTHROPIC_BASE_URL="https://mindrouter.uidaho.edu"
+export ANTHROPIC_AUTH_TOKEN="mr2_yourkeyhere"
+claude
+1. Install direnv:
+brew install direnv
+2. Add hook to ~/.zshrc (near the bottom, after oh-my-zsh / prompt setup):
+eval "$(direnv hook zsh)"
+3. source ~/.zshrc  (or restart the shell)
+
+## Per local-model project
+
+1. Drop a .envrc in the repo root:
+
+   export ANTHROPIC_BASE_URL="http://localhost:11434"   # Ollama root, NO /v1
+   export ANTHROPIC_AUTH_TOKEN="ollama"                 # placeholder, not validated
+   export ANTHROPIC_API_KEY=""
+   export ANTHROPIC_DEFAULT_OPUS_MODEL="qwen3-coder"
+   export ANTHROPIC_DEFAULT_SONNET_MODEL="qwen3-coder"
+   export ANTHROPIC_DEFAULT_HAIKU_MODEL="qwen3-coder"
+
+2. Approve it once:
+direnv allow
+3. cd in -> vars load automatically. cd out -> they unload.
+
+Repos WITHOUT a .envrc stay on normal Anthropic auth. No global exports.
+
+## Onboarding bug (the thing that bit me)
+
+Fresh install ignores settings.json on first run and shows the login prompt.
+Do NOT pick options 1/2/3 — none apply to local models.
+Fix: get past onboarding with vars already live. Options:
+- Launch with vars exported in the same shell (direnv handles this), OR
+- Edit ~/.claude.json, set "hasCompletedOnboarding": true (while Claude Code is closed)
+
+## Gotchas
+
+- Model-tier vars are required. Claude Code requests opus/sonnet/haiku internally;
+without the three DEFAULT_*_MODEL mappings it asks for a Claude model your local
+server doesn't have and rejects the request. (This is the "multiple models" thing —
+three env vars, not multiple "model" blocks.)
+- Ollama base URL = server root, NOT /v1. (LM Studio/llama.cpp do use /v1.)
+- If your runtime only speaks OpenAI format, put LiteLLM in front as a translation proxy.
+- Precedence trap: global shell exports override per-project settings.json/.envrc and
+silently win -> phantom localhost routing + 404s. Keep local-model vars per-project only.
+
+## Verify
+
+- Stuck at login even with vars? curl http://localhost:11434 to confirm server is up.
+- /status inside Claude Code shows the active endpoint + model. Confirm it's your
+local setup in a local repo, and Anthropic in a repo without .envrc.

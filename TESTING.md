@@ -14,6 +14,13 @@ bb test
 - Exits **0 on pass, 1 on fail** (CI-safe) and prints the `clojure.test`
   summary to the terminal.
 - You can also run the file directly: `bb test/tuiCalc_test.clj`.
+- Task internals (why it looks the way it does): the task spawns the test
+  file with `clojure.java.shell/sh "bb" "test/tuiCalc_test.clj"` — `sh`
+  captures the child's output instead of streaming it, so the task re-prints
+  it — and then `System/exit` with the child's code. In this bb build,
+  `exec` inside task bodies mangles its arguments and `babashka.tasks/log`
+  hits the same sci "analysis" wall as other unqualified/external refs, so
+  plain `sh` + `println` + `System/exit` is the combination that works.
 
 The suite covers the pure engine: `level->index`, `submit` (numbers,
 constants, operators, stack commands, `get`/`remove` prompts), bare-ENTER
