@@ -178,5 +178,40 @@
 ;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------
-(let [summary (t/run-tests 'tuiCalc-test)]
-  (System/exit (if (pos? (+ (get summary :fail 0) (get summary :error 0))) 1 0)))
+;; bb's stripped clojure.test has no add-report/all-tests, and its
+;; default reporter prints only the final summary + failures. Run each
+;; test var explicitly so every test shows as it runs:
+;;
+;;   level->index ... ok
+;;   bare-enter-dups ... FAIL
+;; (plus the full expected/actual detail for any FAIL)
+(defn var-name [v]
+  (get (meta v) :name))
+
+(defn test-vars []
+  (->> (ns-publics 'tuiCalc-test)
+       (vals)
+       (filter (comp :test meta))
+       (sort-by var-name)))
+
+(defn run-one [var]
+  ;; Capture the test's own output (bb's clojure.test writes to
+  ;; *test-out*, not *out*) to silence the per-test "Ran 1 tests"
+  ;; noise; the return map carries the failure counts.
+  (let [w (java.io.StringWriter.)]
+    (binding [t/*test-out* w]
+      (let [r (t/run-test-var var)]
+        {:out    (str w)
+         :failed (pos? (+ (get r :fail 0) (get r :error 0)))}))))
+
+(let [results (map (fn [v]
+                     (let [{:keys [out failed]} (run-one v)]
+                       (println (str "  " (var-name v) " ... "
+                                     (if failed "FAIL" "ok")))
+                       (when failed (println out))
+                       (if failed 1 0)))
+                   (test-vars))
+      failed (apply + results)]
+  (println (str "\n" (count results) " tests, " failed
+                (if (= failed 1) " failure" " failures")))
+  (System/exit (if (pos? failed) 1 0)))
