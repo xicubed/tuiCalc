@@ -15,10 +15,15 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 
 ## Confirmed design decisions
 
-- The stack is a plain Clojure **vector** (top = last element).
-- Indexed ops (`get`/`nth`/`remove <i>`) use **HP-15c levels**, not vector
-  indices: `0` = top (X), `1` = below (Y), negatives count up from the bottom.
-  `level->index` translates a level to a vector index.
+- The stack is a plain Clojure **vector** in push order (oldest first,
+  newest last). **X = the newest value** is the last element and is "the
+  top of the stack" — the box draws it at the base and grows *up* (so the
+  box-top value is the *oldest*, the T register).
+- Indexed ops (`get`/`nth`/`remove <i>`) take a **level = offset from X**,
+  not a vector index: `0` = X, `1` = Y, `2` = Z, … deeper; `-1` = T
+  (first-in / oldest), `-2` = next, … `level->index` maps a level to a
+  vector index. (These are *not* real HP-15c levels — the machine has no
+  numbered levels; ours are offset-from-X. Don't call them "HP levels".)
 - Commands carry **real Clojure names**: `pop`/`drop`, `peek`, `count`,
   `reverse`, `get`/`nth`, `remove`, `chs`.
 - **Bare ENTER (empty input) dups the top of the stack** (the HP ENTER key);

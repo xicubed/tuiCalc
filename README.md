@@ -32,8 +32,16 @@ buttons.
 
 ## Using it
 
-Numbers and commands go into the input line; **Enter** submits. The stack
-grows **upward** — the bottom row is the top of the stack (HP's X register).
+Numbers and commands go into the input line; **Enter** submits.
+
+**X is the most recent value** — the one you're working with (bare ENTER
+dups it, operators use it as the right operand, `drop` removes it, `peek`
+shows it). Everything else in the box is just older values.
+
+The box is drawn HP-15c style: the stack fills from the bottom of the frame
+upward, so X is on the bottom row and the older values (Y, Z, … T) stack up
+above it. It isn't capped at four — the box is a fixed-height frame and the
+oldest values fall off the top once the stack exceeds it.
 
 | Action | How | What happens |
 |---|---|---|
@@ -45,7 +53,7 @@ grows **upward** — the bottom row is the top of the stack (HP's X register).
 | Peek | `^t`, or `peek` + Enter | shows `peek = X` without changing the stack |
 | Count | `^n`, or `count` + Enter | shows `count = N` |
 | Reverse | `^r`, or `reverse` + Enter | stack order flips |
-| Copy from a level | `get` + Enter, type a level, Enter (or `get 0`) | copies that level to the top (`0`=top, `1`=below, `-1`=bottom) |
+| Copy from a level | `get` + Enter, type a level, Enter (or `get 0`) | copies that level to X (`0`=X, `1`=Y, `-1`=T) |
 | Remove a level | `remove` + Enter, level, Enter | removes that level |
 | Clear | `clear` + Enter, or `^l` | empty stack |
 | Quit | `q` + Enter | exit |
@@ -79,9 +87,9 @@ after a change run the TUI and smoke-test it:
 6. `^t` (peek) / `^n` (count) → info line, stack untouched
 7. `q` Enter → quit
 
-Watch for: the stack growing **upward**, the right button flashing on every
-action, and the help rows not shifting (a layout miscount breaks click
-positions). Full checklist: **TESTING.md**.
+Watch for: new values appearing on the **bottom row** (the stack-top / X),
+the right button flashing on every action, and the help rows not shifting
+(a layout miscount breaks click positions). Full checklist: **TESTING.md**.
 
 ## TODO
 

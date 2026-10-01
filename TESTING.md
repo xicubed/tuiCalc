@@ -132,7 +132,8 @@ point of the screen-share animation):
 different button while a `get?`/`remove?` prompt is open abandons the prompt.
 
 **What to eyeball for a change:**
-- The **stack grows upward** (newest / X register at the bottom row).
+- New values appear on the **bottom row** of the box — that's the
+  stack-top / X register (HP layout). The box-top value is the *oldest*.
 - The right button **flashes** when you trigger it (keyboard *and* mouse).
 - The **info line** (`peek`/`count`) shows and the help rows *don't move* —
   a miscounted layout line breaks all click hit-testing (see

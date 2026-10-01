@@ -17,7 +17,7 @@
 ;; swaps both out.
 (def input-prompt "> ")
 (def input-placeholder "number, pi, chs, drop, peek, get 0, +, -, *")
-(def level-placeholder "level: 0=top, 1=below, -1=bottom")
+(def level-placeholder "level: 0=X, 1=Y, -1=T")
 
 ;; ------------------------------------------------------------
 ;; Calculator engine
@@ -98,19 +98,25 @@
       (assoc state :stack (conj stack (* -1 top))))))
 
 ;; -------------------------------------------------------------
-;; Stack manipulation. The stack is a plain Clojure vector (top =
-;; last element); these are Clojure collection ops run on it.
-;; Indexed ops take an HP level: 0 = top (X), 1 = below (Y), ...;
-;; negative levels count up from the bottom. level->index maps a
-;; level to a vector index (nil when out of range).
+;; Stack manipulation. The stack is a plain Clojure vector held in
+;; push order: the oldest value is first, the newest (the stack-top,
+;; HP's X register) is LAST. "top of the stack" below always means X /
+;; the newest — NOT the top row of the drawn box (that's the oldest).
+;;
+;; Indexed ops take a *level* = offset from X (the value you're working
+;; with), not a vector index:
+;;   0 = X (newest), 1 = Y, 2 = Z, ... going deeper
+;;   -1 = T (the first-in / oldest), -2 = one older, ... going up
+;; It's a FILO stack: the first value in is at level -1. level->index
+;; maps a level to a vector index (nil when out of range).
 ;; -------------------------------------------------------------
 
 (defn level->index [stack level]
   (when (integer? level)
     (let [n    (count stack)
           vidx (if (neg? level)
-                 (- (abs level) 1)   ; -1 = bottom, -2 = second up, ...
-                 (- n 1 level))]     ;  0 = top, 1 = below it, ...
+                 (- (abs level) 1)   ; -1 = T (oldest), -2 = next, ...
+                 (- n 1 level))]     ;  0 = X (newest), 1 = Y, ...
       (when (and (>= vidx 0) (< vidx n))
         vidx))))
 
@@ -136,8 +142,8 @@
 (defn reverse-stack [state]
   (assoc state :stack (vec (reverse (:stack state)))))
 
-;; Push a copy of the value at level i (Clojure get/nth, HP levels).
-;; get 0 = dup, get 1 = roll, get -1 = bottom.
+;; Push a copy of the value at level i (Clojure get/nth). Levels are
+;; offset from X: 0 = X (dup), 1 = Y, -1 = T (first-in / oldest).
 (defn get-index [state i]
   (let [stack (:stack state)]
     (if-let [vi (level->index stack i)]
@@ -148,7 +154,7 @@
 (defn remove-at [s vi]
   (vec (concat (subvec s 0 vi) (subvec s (inc vi)))))
 
-;; Remove the value at level i (HP levels).
+;; Remove the value at level i (offset from X, see level->index).
 (defn remove-index [state i]
   (let [stack (:stack state)]
     (if-let [vi (level->index stack i)]
@@ -246,8 +252,8 @@
 
       ;; Get the value at level <i> (dup/roll). No level yet: start a
       ;; two-step prompt -- the input box itself becomes "get? " and
-      ;; you type the level (0=top, 1=below, -1=bottom), then Enter.
-      ;; Any other input cancels the prompt and runs as a command.
+      ;; you type the level (0=X, 1=Y, -1=T), then Enter. Any other
+      ;; input cancels the prompt and runs as a command.
       (#{"get" "nth"} token)
       (if-let [i (parse-integer (first rest))]
         [(get-index state i) nil]

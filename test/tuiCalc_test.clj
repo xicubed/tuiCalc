@@ -28,6 +28,42 @@
 
   The functions under test are pure over the `state` map
   `{:stack [...] :input <component> :status ... :info ... :pending ...}`.
+
+  ----------------------------------------------------------------------
+  STACK ORDER vs VECTOR ORDER vs THE BOX — the thing that trips people up
+  ----------------------------------------------------------------------
+  There are THREE ways to think about the stack and they don't line up
+  the same direction. 'stack-top' below always means the value you'd
+  get by pressing ENTER (HP's X register, the newest push) — NOT the
+  top of the drawn box.
+
+  `:stack` is a Clojure vector in *chronological* order: oldest push
+  first, newest (the stack-top / X) LAST. Push 5, then 9 -> [5 9]:
+
+      vector :stack =  [5 9]
+                          ^  ^
+                          |  stack-top / X (newest)
+                       oldest
+
+  The TUI draws it so the newest (X) is on the BOTTOM row — like an HP
+  15c, where X is the bottom register and Y sits above it:
+
+      │              5.0 │   <- level 1 / Y  (older)
+      │              9.0 │   <- level 0 / X  (stack-top, newest)
+
+  So 5 is the OLDER value (the T register); the stack-top (9) is X. The
+  stack is pinned to the bottom of the box and grows up, so for a 2-deep
+  stack 5 sits just above X (the box's top rows are blank until it fills).
+  Same vector, three lenses:
+    - vector index 0 = leftmost  = oldest = T register
+    - level 0        = rightmost = newest = X register
+    - level -1       = oldest    = T register
+
+  *levels* (get/nth/remove) are an OFFSET FROM X, not a vector index, and
+  not a real HP-15c level (the machine has no numbered levels). They walk
+  the vector: level 0 -> index (count-1-0), level 1 -> (count-2), ... and
+  level -1 -> the oldest (T). `get 0` copies the stack-top (X). The exact
+  mapping is in `level->index`.
   "
   (:require [clojure.test :as t]
             [tuiCalc :as tc]))
@@ -52,14 +88,21 @@
       tc/submit first))
 
 ;; ---------------------------------------------------------------
-;; level->index — HP-15c levels -> vector index
+;; level->index — offset-from-X level -> vector index
+;;
+;; On [1 2 3]: 3 is X (newest), 2 is Y, 1 is Z/T (oldest).
+;;   level 0  -> X (3)  -> index 2      (newest)
+;;   level 1  -> Y (2)  -> index 1
+;;   level 2  -> Z (1)  -> index 0      (oldest of 3)
+;;   level -1 -> T (1)  -> index 0      (first-in; == Z when 3 deep)
+;;   level -2 -> Y (2)  -> index 1      (negatives count from T toward X)
 ;; ---------------------------------------------------------------
 (t/deftest level->index
-  (t/is (= 2 (tc/level->index [1 2 3] 0)))    ; 0 = top
-  (t/is (= 1 (tc/level->index [1 2 3] 1)))    ; 1 = below top
-  (t/is (= 0 (tc/level->index [1 2 3] 2)))    ; 2 = bottom
-  (t/is (= 0 (tc/level->index [1 2 3] -1)))   ; -1 = bottom
-  (t/is (= 1 (tc/level->index [1 2 3] -2)))   ; -2 = second from bottom
+  (t/is (= 2 (tc/level->index [1 2 3] 0)))    ; 0 = X (newest)
+  (t/is (= 1 (tc/level->index [1 2 3] 1)))    ; 1 = Y
+  (t/is (= 0 (tc/level->index [1 2 3] 2)))    ; 2 = Z (oldest of 3)
+  (t/is (= 0 (tc/level->index [1 2 3] -1)))   ; -1 = T (first-in)
+  (t/is (= 1 (tc/level->index [1 2 3] -2)))   ; -2 = one older than T
   (t/is (nil? (tc/level->index [1 2 3] 3)))   ; out of range
   (t/is (nil? (tc/level->index [] 0)))        ; empty stack
   (t/is (nil? (tc/level->index [1 2 3] "0"))))  ; not an integer
@@ -124,18 +167,29 @@
 ;; ---------------------------------------------------------------
 ;; submit: get / nth / remove (two-step level prompt)
 ;; ---------------------------------------------------------------
+;; The seed [5 9] means "pushed 5, then 9", so 9 is X (newest) and 5 is
+;; the one below it. With only two values, 5 is simultaneously Y (one
+;; below X) and T (the first-in/oldest) — level 1 and level -1 both
+;; point at it. (At 3+ deep they'd differ: Y is not yet T.)
+;;
+;;     level  ->  register  ->  value
+;;     0       ->  X        ->  9   (newest, stack-top)
+;;     1       ->  Y        ->  5
+;;     -1      ->  T        ->  5   (oldest; == Y when only 2 deep)
+;;
+;; So `get 0` copies X (9); `get 1` and `get -1` both copy 5 here.
 (t/deftest submit-get
-  (t/is (= [5 9 9] (submit->stack "get 0" [5 9])))   ; level 0 = top
-  (t/is (= [5 9 5] (submit->stack "get 1" [5 9])))   ; level 1 = below
-  (t/is (= [5 9 5] (submit->stack "get -1" [5 9])))  ; level -1 = bottom
+  (t/is (= [5 9 9] (submit->stack "get 0" [5 9])))   ; get X (9)
+  (t/is (= [5 9 5] (submit->stack "get 1" [5 9])))   ; get Y (5)
+  (t/is (= [5 9 5] (submit->stack "get -1" [5 9])))  ; get T (5)
   (t/is (= [5 9 9] (submit->stack "nth 0" [5 9])))   ; nth is an alias
   ;; bare `get` (no level) starts the prompt, does not push
   (t/is (= [5 9] (:stack (submit->state "get" [5 9]))))
   (t/is (= "get" (:pending (submit->state "get" [5 9])))))
 
 (t/deftest submit-remove
-  (t/is (= [5] (submit->stack "remove 0" [5 9])))    ; remove top (9)
-  (t/is (= [9] (submit->stack "remove 1" [5 9])))    ; remove below (5)
+  (t/is (= [5] (submit->stack "remove 0" [5 9])))    ; remove X (9)
+  (t/is (= [9] (submit->stack "remove 1" [5 9])))    ; remove Y (5)
   ;; bare `remove` (no level) starts the prompt, does not remove
   (t/is (= [5 9] (:stack (submit->state "remove" [5 9]))))
   (t/is (= "remove" (:pending (submit->state "remove" [5 9])))))
