@@ -93,8 +93,11 @@ pom.xml.asc
 .nrepl-port
 .cpcache/
 
+# bb
 /.clj-kondo/
 /.lsp/
+
+# AI
 /.claude/
 
 # macOS
