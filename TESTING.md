@@ -120,6 +120,7 @@ point of the screen-share animation):
 | **Bare ENTER dups** | push a value, then press **Enter** with the box empty | the top value is copied; `[ENTER]` flashes |
 | Add | `4` Enter, `5` Enter, click `[+]` (or type `+`) | `9.0` |
 | Sign | type `chs` Enter, or `^s` | top flips sign, `[CHS]` flashes |
+| Invert | `5` Enter, then `[INV]` / `inv` Enter / `^v` | top becomes `0.2`, `[INV]` flashes |
 | Drop top | `^x` or `drop` Enter | top removed |
 | Peek | `^t` or `peek` Enter | `peek = X` on the info line, stack unchanged |
 | Count | `^n` or `count` Enter | `count = N` |

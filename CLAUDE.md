@@ -47,6 +47,14 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 - **TODO-tuiCalc.md** lists known bugs from code review.
 - More Clojure vector/stack ops are wanted (swap, min/max, abs, …).
 
+## Rat Pack demo (Herdr)
+
+Claude is **dean** and manages **sammy** (MindRouter) and **jerry** (local
+Unsloth 3B, ~20+ min per turn) as Herdr agents. Whenever dean prompts sammy or
+jerry, start a background `herdr agent wait <name>` so their completion
+notifies dean, and report their reply to the user immediately — don't wait to
+be asked.
+
 ## Gotchas (detail in TESTING.md)
 
 - **babashka 1.13 analyzes `defn` bodies at load time** → no forward

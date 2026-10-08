@@ -5,6 +5,7 @@
    [charm.components.text-input :as text-input]
    [charm.message :as msg]
    [charm.program :as program]
+   [charm.render.core :as render]
    [charm.style.core :as style]
    [clojure.string :as str]))
 
@@ -16,7 +17,7 @@
 ;; Normal input-box prompt/placeholder; the two-step level prompt
 ;; swaps both out.
 (def input-prompt "> ")
-(def input-placeholder "number, pi, chs, drop, peek, get 0, +, -, *")
+(def input-placeholder "number, pi, chs, inv, drop, peek, get 0, +, -, *")
 (def level-placeholder "level: 0=X, 1=Y, -1=T")
 
 ;; ------------------------------------------------------------
@@ -41,7 +42,9 @@
    "-" -
    "x" *
    "*" *
-   "/" ieee-div})
+   "/" ieee-div
+   "^" Math/pow
+   "pow" Math/pow})
 
 (defn parse-number [s]
   (case (str/lower-case s)
@@ -96,6 +99,15 @@
     (let [top   (peek (:stack state))
           stack (pop (:stack state))]
       (assoc state :stack (conj stack (* -1 top))))))
+
+;; Invert the top stack value (1/x). Uses ieee-div so 1/0 behaves
+;; like division (Infinity or NaN).
+(defn inv [state]
+  (if (empty? (:stack state))
+    (assoc state :status "Stack empty")
+    (let [top   (peek (:stack state))
+          stack (pop (:stack state))]
+      (assoc state :stack (conj stack (ieee-div 1.0 top))))))
 
 ;; -------------------------------------------------------------
 ;; Stack manipulation. The stack is a plain Clojure vector held in
@@ -234,6 +246,10 @@
       (= token "chs")
       [(chs state) nil]
 
+      ;; Invert the top value (1/x).
+      (= token "inv")
+      [(inv state) nil]
+
       ;; Pop the top value (drop is an alias).
       (#{"drop" "pop"} token)
       [(pop-top state) nil]
@@ -287,7 +303,7 @@
 ;; the rows render as the help lines and drive click hit-testing, so
 ;; labels and positions can never drift apart.
 (def help-rows
-  [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["CHS" "[CHS]"] ["pi" "[pi]"]]
+  [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["^" "[y^x]"] ["CHS" "[CHS]"] ["INV" "[INV]"] ["pi" "[pi]"]]
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["peek" "[peek]"] ["count" "[count]"] ["reverse" "[reverse]"]
     ["get" "[GET]"]]
@@ -295,7 +311,7 @@
 
 ;; Faint legend under the buttons.
 (def hint-line
-  "^x drop ^s chs ^t peek ^n count ^r rev ^l clear ^p pi ^g get")
+  "^x drop ^s chs ^v inv ^t peek ^n count ^r rev ^l clear ^p pi ^g get ^ pow")
 
 (defn help-lines []
   (map #(str/join "  " (map second %)) help-rows))
@@ -370,6 +386,7 @@
 (defn run-action [state action]
   (case action
     "CHS"     [(chs state) nil]
+    "INV"     [(inv state) nil]
     "pi"      [(push-pi state) nil]
     "clear"   [(assoc state :stack []) nil]
     "drop"    [(pop-top state) nil]
@@ -387,6 +404,7 @@
 (def shortcuts
   {"x" "drop"
    "s" "CHS"
+   "v" "INV"
    "t" "peek"
    "n" "count"
    "r" "reverse"
@@ -400,6 +418,7 @@
 (defn button-for-token [token]
   (condp = token
     "chs" "CHS"
+    "inv" "INV"
     "pi" "pi"
     "clear" "clear"
     "q" "q" "quit" "q" "exit" "q"
@@ -408,6 +427,7 @@
     "count" "count"
     "reverse" "reverse"
     "get" "get" "nth" "get" "remove" "get"
+    "pow" "^"
     (when (and (string? token) (contains? ops token))
       ;; "x" is an ops alias for the "*" button.
       (if (= token "x") "*" token))))
@@ -654,7 +674,19 @@
 ;; Go
 ;; ------------------------------------------------------------
 
+;; charm's resize path only re-diffs against the previous frame, so a
+;; resize (e.g. Herdr laying out a pane after launch) leaves a stale
+;; copy of the calculator on screen. Clear and force a full repaint.
+(defn clear-on-resize! []
+  (alter-var-root #'render/update-size!
+                  (fn [orig]
+                    (fn [renderer width height]
+                      (orig renderer width height)
+                      (render/clear-screen! renderer)
+                      (render/repaint! renderer)))))
+
 (defn -main [& _]
+  (clear-on-resize!)
   (program/run
    {:init init
     :update update-fn

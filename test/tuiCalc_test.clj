@@ -142,6 +142,8 @@
   (t/is (= [18.0] (submit->stack "*" [3.0 6.0])))
   (t/is (= [18.0] (submit->stack "x" [3.0 6.0])))   ; 'x' is an alias for *
   (t/is (= [0.5] (submit->stack "/" [1.0 2.0])))
+  (t/is (= [1024.0] (submit->stack "^" [2.0 10.0])))  ; 2^10 = 1024
+  (t/is (= [3.0] (submit->stack "pow" [9.0 0.5])))    ; 9^0.5 = 3
   ;; underflow: an operator needs two values, stack is left intact
   (t/is (= [3.0] (:stack (submit->state "+" [3.0]))))
   (t/is (= "Need two values" (:status (submit->state "+" [3.0])))))
@@ -163,6 +165,33 @@
 (t/deftest submit-chs
   (t/is (= [-5] (submit->stack "chs" [5])))
   (t/is (= "Stack empty" (:status (submit->state "chs")))))
+
+;; inv (1/x) replaces only X; Y and below are untouched.
+(t/deftest submit-inv
+  (t/is (= [0.2] (submit->stack "inv" [5])))
+  (t/is (= [4 0.2] (submit->stack "inv" [4 5])))
+  (t/is (= [-0.5] (submit->stack "inv" [-2])))
+  (t/is (= [Double/POSITIVE_INFINITY] (submit->stack "inv" [0])))  ; 1/0 via ieee-div
+  (t/is (= "Stack empty" (:status (submit->state "inv")))))
+
+;; The keystroke path: type 5, press [ENTER], then press [INV] (button
+;; or ^v) -> 0.2.
+(t/deftest five-enter-inv
+  (let [after-enter (first (tc/submit (typed fresh "5")))]
+    (t/is (= [5.0] (:stack after-enter)))
+    (t/is (= [0.2] (:stack (first (tc/run-action after-enter "INV")))))
+    (t/is (= "INV" (get tc/shortcuts "v")))))
+
+;; y^x: 2 [ENTER] 10 [y^x] -> 1024. Y is the base, X the exponent.
+(t/deftest two-enter-ten-pow
+  (let [after-enter (first (tc/submit (typed fresh "2")))
+        after-10    (first (tc/submit (typed after-enter "10")))]
+    (t/is (= [2.0 10.0] (:stack after-10)))
+    (t/is (= [1024.0] (:stack (first (tc/run-action after-10 "^"))))))
+  (t/is (= [0.125] (submit->stack "^" [2.0 -3.0])))     ; negative exponent
+  (t/is (= [7 8.0] (submit->stack "pow" [7 2 3])))      ; only X and Y consumed
+  (t/is (= [2.0] (:stack (submit->state "^" [2.0]))))   ; underflow leaves stack
+  (t/is (= "Need two values" (:status (submit->state "pow" [2.0])))))
 
 ;; ---------------------------------------------------------------
 ;; submit: get / nth / remove (two-step level prompt)
@@ -223,11 +252,39 @@
   (t/is (= "enter" (tc/flash-for-action (typed fresh "") "enter")))
   ;; typing "chs" then Enter flashes [CHS]
   (t/is (= "CHS" (tc/flash-for-action (typed fresh "chs") "enter")))
+  ;; typing "inv" then Enter flashes [INV]
+  (t/is (= "INV" (tc/flash-for-action (typed fresh "inv") "enter")))
+  ;; typing "pow" or "^" then Enter flashes [y^x] (action "^")
+  (t/is (= "^" (tc/flash-for-action (typed fresh "pow") "enter")))
+  (t/is (= "^" (tc/flash-for-action (typed fresh "^") "enter")))
   ;; a bare number flashes [ENTER]
   (t/is (= "enter" (tc/flash-for-action (typed fresh "7") "enter")))
   ;; a level typed into a get? prompt flashes [GET]
   (let [prompt (tc/start-level-prompt (assoc fresh :stack [5]) "get" "get? ")]
     (t/is (= "get" (tc/flash-for-action (typed prompt "0") "enter")))))
+
+;; ---------------------------------------------------------------
+;; find-button-at — clicking the rendered [INV] hits INV
+;; ---------------------------------------------------------------
+;; Mouse coords are 1-based; locate [INV] in the rendered first help
+;; line rather than hard-coding its column.
+(t/deftest click-inv-button
+  (let [line  (first (tc/help-lines))
+        start (.indexOf line "[INV]")
+        y     (inc tc/help-row0)]
+    (t/is (<= 0 start))
+    (t/is (= "INV" (tc/find-button-at (inc start) y)))         ; the '['
+    (t/is (= "INV" (tc/find-button-at (+ start 5) y)))         ; the ']'
+    (t/is (not= "INV" (tc/find-button-at (+ start 6) y)))))    ; gap after
+
+(t/deftest click-pow-button
+  (let [line  (first (tc/help-lines))
+        start (.indexOf line "[y^x]")
+        y     (inc tc/help-row0)]
+    (t/is (<= 0 start))
+    (t/is (= "^" (tc/find-button-at (inc start) y)))           ; the '['
+    (t/is (= "^" (tc/find-button-at (+ start 5) y)))           ; the ']'
+    (t/is (not= "^" (tc/find-button-at (+ start 6) y)))))      ; gap after
 
 ;; ---------------------------------------------------------------
 ;; Run
