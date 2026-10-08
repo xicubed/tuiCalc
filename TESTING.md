@@ -119,6 +119,7 @@ point of the screen-share animation):
 | Push a number | type `7` then **Enter** | `7.0` appears, `[ENTER]` flashes |
 | **Bare ENTER dups** | push a value, then press **Enter** with the box empty | the top value is copied; `[ENTER]` flashes |
 | Add | `4` Enter, `5` Enter, click `[+]` (or type `+`) | `9.0` |
+| Power (y^x) | `2` Enter, `10` Enter, click `[y^x]` (or type `^`, or `pow` Enter) | `1024.0`, `[y^x]` flashes |
 | Sign | type `chs` Enter, or `^s` | top flips sign, `[CHS]` flashes |
 | Invert | `5` Enter, then `[INV]` / `inv` Enter / `^v` | top becomes `0.2`, `[INV]` flashes |
 | Drop top | `^x` or `drop` Enter | top removed |
