@@ -287,6 +287,33 @@
     (t/is (not= "^" (tc/find-button-at (+ start 6) y)))))      ; gap after
 
 ;; ---------------------------------------------------------------
+;; swap command (HP-15c x<>y)
+;; ---------------------------------------------------------------
+(t/deftest submit-swap
+  ;; swap exchanges the top two values (X and Y)
+  (t/is (= [1 3 2] (submit->stack "swap" [1 2 3])))
+  (t/is (= [1 3 2] (submit->stack "x<>y" [1 2 3])))
+  (t/is (= [7 3] (submit->stack "swap" [3 7])))
+  (t/is (= [7 3] (submit->stack "x<>y" [3 7])))
+  ;; underflow: fewer than two values leaves stack unchanged and reports need
+  (t/is (= [42] (:stack (submit->state "swap" [42]))))
+  (t/is (= "Need two values" (:status (submit->state "swap" [42]))))
+  (t/is (= [] (:stack (submit->state "swap" []))))
+  (t/is (= "Need two values" (:status (submit->state "swap" [])))))
+
+(t/deftest button-for-swap
+  (t/is (= "swap" (tc/button-for-token "swap")))
+  (t/is (= "swap" (tc/button-for-token "x<>y"))))
+
+(t/deftest flash-swap
+  (t/is (= "swap" (tc/flash-for-action (typed fresh "swap") "enter")))
+  (t/is (= "swap" (tc/flash-for-action (typed fresh "x<>y") "enter"))))
+
+(t/deftest run-action-swap
+  (let [[new-state _] (tc/run-action (assoc fresh :stack [1 2 3]) "swap")]
+    (t/is (= [1 3 2] (:stack new-state)))))
+
+;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------
 ;; bb's stripped clojure.test has no add-report/all-tests, and its

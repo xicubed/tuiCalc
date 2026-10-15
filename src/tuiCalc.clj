@@ -109,6 +109,16 @@
           stack (pop (:stack state))]
       (assoc state :stack (conj stack (ieee-div 1.0 top))))))
 
+;; Swap X and Y (the last two elements). HP-15c x<>y.
+(defn swap-xy [state]
+  (let [stack (:stack state)]
+    (if (< (count stack) 2)
+      (assoc state :status "Need two values")
+      (let [x   (peek stack)
+            y   (peek (pop stack))
+            stack (pop (pop stack))]
+        (assoc state :stack (conj (conj stack x) y))))))
+
 ;; -------------------------------------------------------------
 ;; Stack manipulation. The stack is a plain Clojure vector held in
 ;; push order: the oldest value is first, the newest (the stack-top,
@@ -250,6 +260,10 @@
       (= token "inv")
       [(inv state) nil]
 
+      ;; Swap X and Y.
+      (#{"swap" "x<>y"} token)
+      [(swap-xy state) nil]
+
       ;; Pop the top value (drop is an alias).
       (#{"drop" "pop"} token)
       [(pop-top state) nil]
@@ -305,8 +319,8 @@
 (def help-rows
   [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["^" "[y^x]"] ["CHS" "[CHS]"] ["INV" "[INV]"] ["pi" "[pi]"]]
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
-    ["peek" "[peek]"] ["count" "[count]"] ["reverse" "[reverse]"]
-    ["get" "[GET]"]]
+    ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
+    ["reverse" "[reverse]"] ["get" "[GET]"]]
    [["q" "[q]"]]])
 
 ;; Faint legend under the buttons.
@@ -390,6 +404,7 @@
     "pi"      [(push-pi state) nil]
     "clear"   [(assoc state :stack []) nil]
     "drop"    [(pop-top state) nil]
+    "swap"    [(swap-xy state) nil]
     "peek"    [(peek-top state) nil]
     "count"   [(count-stack state) nil]
     "reverse" [(reverse-stack state) nil]
@@ -423,6 +438,7 @@
     "clear" "clear"
     "q" "q" "quit" "q" "exit" "q"
     "drop" "drop" "pop" "drop"
+    "swap" "swap" "x<>y" "swap"
     "peek" "peek"
     "count" "count"
     "reverse" "reverse"
