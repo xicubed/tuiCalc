@@ -49,8 +49,10 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 
 ## Rat Pack demo (Herdr)
 
-Claude is **dean** and manages **sammy** (MindRouter) and **jerry** (local
-Unsloth 3B, ~20+ min per turn) as Herdr agents. Whenever dean prompts sammy or
+Claude (Opus, the expensive one) is **dean**, head of the Rat Pack: dean manages
+and delegates, and hands real work to **sammy** (MindRouter qwen3.5-122b) and
+**jerry** (MindRouter gpt-oss-120b). All three are Claude Code panes in Herdr,
+named via `herdr agent rename` (names clear when an agent restarts). Whenever dean prompts sammy or
 jerry, start a background `herdr agent wait <name>` so their completion
 notifies dean, and report their reply to the user immediately — don't wait to
 be asked.
