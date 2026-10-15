@@ -205,6 +205,144 @@
                            (assoc :prompt input-prompt)
                            (assoc :placeholder input-placeholder))))))
 
+;; Unary ops for map (no argument allowed).
+(def unary-ops
+  {"chs" (fn [x] (double (* -1 x)))
+   "inv" (fn [x] (double (ieee-div 1.0 x)))})
+
+;; Build a binary function from an op token and an argument value.
+;; Element is the LEFT operand: f elem arg.
+(defn make-bin-fn [token arg]
+  (case token
+    "+" (fn [e] (+ e arg))
+    "-" (fn [e] (- e arg))
+    "x" (fn [e] (* e arg))
+    "*" (fn [e] (* e arg))
+    "/" (fn [e] (ieee-div e arg))
+    "^" (fn [e] (Math/pow e arg))
+    "pow" (fn [e] (Math/pow e arg))))
+
+;; Display name for an op in the :info string.
+(defn op-display-name [token]
+  (case token
+    "x" "*"
+    "^" "Math/pow"
+    "pow" "Math/pow"
+    token))
+
+;; Format a number for display in info strings: show as int if whole.
+(defn format-num-for-info [n]
+  (if (and (number? n) (integer? n))
+    (str n)
+    (if (and (number? n) (== n (long n)))
+      (str (long n))
+      (str n))))
+
+;; Start a two-step map/reduce prompt.
+(defn start-map-reduce-prompt [state pending prompt-str placeholder]
+  (assoc state
+         :pending pending
+         :input (-> (:input state)
+                    text-input/reset
+                    (assoc :prompt prompt-str)
+                    (assoc :placeholder placeholder))))
+
+;; Process the map?/reduce? second-line input.
+;; op-arg-str is the part AFTER "map" or "reduce" (e.g., "+ 4" or "chs").
+(defn handle-map-reduce-prompt [state pending op-arg-str]
+  (let [stack (:stack state)
+        op-arg-str (str/trim op-arg-str)]
+    (cond
+      ;; Empty input cancels the prompt.
+      (str/blank? op-arg-str)
+      [(abort-prompt state) nil]
+
+      :else
+      (let [[op-token & arg-parts] (str/split (str/lower-case op-arg-str) #"\s+")
+            arg-str (when (seq arg-parts) (str/join " " arg-parts))]
+        (cond
+          ;; Unknown op (check before empty stack).
+          (and (not (#{"chs" "inv"} op-token))
+               (not (contains? ops op-token)))
+          [(assoc state :status (str "Unknown: " op-token)) nil]
+
+          ;; Empty stack.
+          (empty? stack)
+          [(assoc state :status "Stack empty") nil]
+
+          ;; Unary op (chs or inv).
+          (#{"chs" "inv"} op-token)
+          (if (some? arg-str)
+            [(assoc state :status (str op-token " takes no argument")) nil]
+            (let [f (get unary-ops op-token)
+                  new-stack (mapv f stack)
+                  info-str (case op-token
+                             "chs" "(mapv - stack)"
+                             "inv" "(mapv #(/ 1 %) stack)")]
+              [(assoc state :stack new-stack :info info-str) nil]))
+
+          ;; Binary op.
+          (contains? ops op-token)
+          (if (nil? arg-str)
+            (if (< (count stack) 2)
+              [(assoc state :status "Need two values") nil]
+              (let [operand (peek stack)
+                    stack-without-x (pop stack)
+                    f (make-bin-fn op-token operand)
+                    new-stack (mapv f stack-without-x)
+                    op-disp (op-display-name op-token)
+                    info-str (str "(mapv #(" op-disp " % " (format-num-for-info operand) ") stack)")]
+                [(assoc state :stack new-stack :info info-str) nil]))
+            (if-let [arg (parse-number arg-str)]
+              (let [f (make-bin-fn op-token arg)
+                    new-stack (mapv f stack)
+                    op-disp (op-display-name op-token)
+                    info-str (str "(mapv #(" op-disp " % " (format-num-for-info arg) ") stack)")]
+                [(assoc state :stack new-stack :info info-str) nil])
+              [(assoc state :status (str "Unknown: " arg-str)) nil]))
+
+          :else
+          [(assoc state :status (str "Unknown: " op-token)) nil])))))
+
+;; Process reduce command with op and optional init value.
+(defn handle-reduce [state op-token arg-str]
+  (let [stack (:stack state)]
+    (cond
+      ;; Unknown op (check before empty stack).
+      (not (contains? ops op-token))
+      [(assoc state :status (str "Unknown: " op-token)) nil]
+
+      ;; Empty stack.
+      (empty? stack)
+      (if (nil? arg-str)
+        [(assoc state :status "Stack empty") nil]
+        (if-let [init (parse-number arg-str)]
+          (let [op-disp (op-display-name op-token)]
+            [(assoc state
+                    :stack [(reduce (get ops op-token) init stack)]
+                    :info (str "(reduce " op-disp " " (format-num-for-info init) " stack)"))
+             nil])
+          [(assoc state :status (str "Unknown: " arg-str)) nil]))
+
+      ;; Binary op with no init: reduce over stack.
+      (nil? arg-str)
+      (let [result (double (reduce (get ops op-token) stack))]
+        [(assoc state
+                :stack (if (empty? stack) stack [result])
+                :info (str "(reduce " (op-display-name op-token) " stack)"))
+         nil])
+
+      ;; Binary op with init value.
+      :else
+      (if-let [init (parse-number arg-str)]
+        (let [result (double (reduce (get ops op-token) init stack))
+              op-disp (op-display-name op-token)]
+          [(assoc state
+                  :stack [result]
+                  :info (str "(reduce " op-disp " " (format-num-for-info init) " stack)"))
+           nil])
+        [(assoc state :status (str "Unknown: " arg-str)) nil]))))
+
 ;; ------------------------------------------------------------
 ;; Process one entered token
 ;; ------------------------------------------------------------
@@ -228,6 +366,16 @@
                      :pending nil)]
 
     (cond
+
+      ;; Two-step prompt: map/reduce takes op+arg (not just integer level).
+      ;; This branch must come BEFORE the get/remove integer check.
+      ;; Blank input cancels the prompt (no dup).
+      (and pending (#{"map" "reduce"} pending))
+      (cond
+        (str/blank? raw)    [(abort-prompt state) nil]
+        (= pending "reduce") (handle-reduce state token
+                                            (when (seq rest) (str/join " " rest)))
+        :else               (handle-map-reduce-prompt state pending raw))
 
       ;; Two-step prompt level: head is the LEVEL for the pending
       ;; get/nth/remove. (Non-integer input cancels the prompt and
@@ -295,6 +443,23 @@
         [(remove-index state i) nil]
         [(start-level-prompt state "remove" "remove? ") nil])
 
+      ;; map: start two-step prompt or run with op+arg.
+      (= token "map")
+      (if (some? (first rest))
+        (handle-map-reduce-prompt state "map" (str/join " " rest))
+        [(start-map-reduce-prompt state "map" "map? "
+                                  "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv")
+         nil])
+
+      ;; reduce: start two-step prompt or run with op+init.
+      (= token "reduce")
+      (if (some? (first rest))
+        (handle-reduce state (str/lower-case (first rest))
+                       (when (>= (count rest) 2) (str/join " " (drop 1 rest))))
+        [(start-map-reduce-prompt state "reduce" "reduce? "
+                                  "[start] op: +, *, /, 10 + (sum+10)")
+         nil])
+
       ;; Arithmetic operator.
       (contains? ops token)
       (let [[stack status]
@@ -321,7 +486,7 @@
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
     ["reverse" "[reverse]"] ["get" "[GET]"]]
-   [["q" "[q]"]]])
+   [["map" "[map]"] ["reduce" "[reduce]"] ["q" "[q]"]]])
 
 ;; Faint legend under the buttons.
 (def hint-line
@@ -409,6 +574,10 @@
     "count"   [(count-stack state) nil]
     "reverse" [(reverse-stack state) nil]
     "get"     [(start-level-prompt state "get" "get? ") nil]
+    "map"     [(start-map-reduce-prompt state "map" "map? "
+                                        "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
+    "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
+                                        "[start] op: +, *, /, 10 + (sum+10)") nil]
     "q"       [state program/quit-cmd]
     "enter"   (submit state)
     [(execute-op state action) nil]))
@@ -443,6 +612,8 @@
     "count" "count"
     "reverse" "reverse"
     "get" "get" "nth" "get" "remove" "get"
+    "map" "map"
+    "reduce" "reduce"
     "pow" "^"
     (when (and (string? token) (contains? ops token))
       ;; "x" is an ops alias for the "*" button.
@@ -549,14 +720,35 @@
           action)
          (or c' (flash-cmd))])
 
+      ;; RPN at a map?/reduce? prompt: an operator key (including -)
+      ;; runs it now, with whatever number was typed as the arg/init:
+      ;; map? 4 then + is "map + 4"; map? then + is "map +" (X operand).
+      ;; It reuses the Enter path by submitting "<op> <number>".
+      (and (msg/key-press? message)
+           (not (:ctrl message))
+           (#{"map" "reduce"} (:pending state))
+           (contains? ops key)
+           (not= "x" key)
+           (let [txt (text-input/value (:input state))]
+             (or (str/blank? txt) (parse-number txt))))
+      (let [line    (str/trim (str key " " (text-input/value (:input state))))
+            [s' c'] (submit (update state :input assoc
+                                    :value (vec line) :pos (count line)))]
+        [(with-flash s' (:pending state)) (or c' (flash-cmd))])
+
       ;; Operators execute immediately (keyboard shortcuts, except - for
-      ;; negative numbers and x so words like "exit" can be typed).
-      ;; Abandons a pending level prompt, discarding the half-typed
-      ;; level so it can't be committed as a number.
+      ;; negative numbers and x so words like "exit" can be typed) --
+      ;; but only while the input is blank or a number, so a typed
+      ;; command like "map + 4" can contain operators. Abandons a
+      ;; pending level prompt, discarding the half-typed level so it
+      ;; can't be committed as a number.
       (and (msg/key-press? message)
            (not (:ctrl message))
            (contains? ops key)
-           (not (#{"-" "x"} key)))
+           (not (#{"-" "x"} key))
+           (not (#{"map" "reduce"} (:pending state)))
+           (let [txt (text-input/value (:input state))]
+             (or (str/blank? txt) (parse-number txt))))
       (let [s' (execute-op (if (:pending state)
                              (abort-prompt state)
                              state)

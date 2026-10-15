@@ -74,7 +74,7 @@
 
 ;; Simulate the user having typed `txt` into the input box.
 (defn typed [state txt]
-  (update state :input assoc :value (vec txt)))
+  (update state :input assoc :value (vec txt) :pos (count txt)))
 
 ;; The stack after submitting whatever `txt` says (on `initial` stack).
 (defn submit->stack [txt & [initial]]
@@ -312,6 +312,242 @@
 (t/deftest run-action-swap
   (let [[new-state _] (tc/run-action (assoc fresh :stack [1 2 3]) "swap")]
     (t/is (= [1 3 2] (:stack new-state)))))
+
+;; ---------------------------------------------------------------
+;; map — apply a unary/binary op to every element in the stack
+;; ---------------------------------------------------------------
+;; map + 4: [1 2 3] -> [5 6 7]
+(t/deftest map-binary-with-arg
+  (t/is (= [5.0 6.0 7.0] (submit->stack "map + 4" [1 2 3])))
+  (t/is (= [0.0 1.0 2.0] (submit->stack "map - 1" [1 2 3])))
+  (t/is (= [1.0 2.0] (submit->stack "map / 2" [2 4])))
+  (t/is (= [4.0 9.0] (submit->stack "map ^ 2" [2 3])))
+  ;; x displays as *
+  (t/is (= [6.0 12.0] (submit->stack "map * 2" [3 6]))))
+
+;; map chs, map inv — unary ops
+(t/deftest map-unary
+  (t/is (= [-1.0 2.0] (submit->stack "map chs" [1 -2])))
+  (t/is (= [0.5 0.25] (submit->stack "map inv" [2 4]))))
+
+;; map + with no arg: X is the operand (HP-style)
+;; Bug 2 fix: explicit arg maps over WHOLE stack, so [1 2 3 10] + map + 10 = [11 12 13 20]
+(t/deftest map-binary-with-x-as-operand
+  (t/is (= [11.0 12.0 13.0 20.0] (submit->stack "map + 10" [1 2 3 10])))
+  (t/is (= "map" (:pending (submit->state "map" [1 2 3 10])))))
+
+;; map with pi constant
+(t/deftest map-with-pi
+  (t/is (= (+ 1 Math/PI) (first (submit->stack "map + pi" [1])))))
+
+;; map errors
+(t/deftest map-errors
+  ;; empty stack
+  (t/is (= "Stack empty" (:status (submit->state "map + 4"))))
+  (t/is (= [] (:stack (submit->state "map + 4"))))
+  ;; map + with no arg and only X on stack - Bug 2 fix: explicit arg always works
+  ;; map + 5 on [5] -> [10.0] (not "Need two values")
+  (t/is (= [10.0] (submit->stack "map + 5" [5])))
+  ;; unknown op
+  (t/is (= "Unknown: foo" (:status (submit->state "map foo 2" [1 2]))))
+  (t/is (= [1 2] (:stack (submit->state "map foo 2" [1 2]))))
+  ;; bad argument
+  (t/is (= "Unknown: abc" (:status (submit->state "map + abc" [1 2]))))
+  (t/is (= [1 2] (:stack (submit->state "map + abc" [1 2]))))
+  ;; unary op with argument
+  (t/is (= "chs takes no argument" (:status (submit->state "map chs 3" [1 2]))))
+  (t/is (= [1 2] (:stack (submit->state "map chs 3" [1 2])))))
+
+;; map info messages
+(t/deftest map-info
+  (t/is (= "(mapv #(+ % 4) stack)" (:info (submit->state "map + 4" [1 2 3]))))
+  (t/is (= "(mapv #(- % 1) stack)" (:info (submit->state "map - 1" [1 2 3]))))
+  (t/is (= "(mapv #(/ % 2) stack)" (:info (submit->state "map / 2" [2 4]))))
+  (t/is (= "(mapv #(Math/pow % 2) stack)" (:info (submit->state "map ^ 2" [2 3]))))
+  (t/is (= "(mapv - stack)" (:info (submit->state "map chs" [1 -2]))))
+  (t/is (= "(mapv #(/ 1 %) stack)" (:info (submit->state "map inv" [2 4])))))
+
+;; map button and flash
+(t/deftest map-button-and-flash
+  (t/is (= "map" (tc/button-for-token "map")))
+  (t/is (= "map" (tc/flash-for-action (typed fresh "map") "enter"))))
+
+;; ---------------------------------------------------------------
+;; reduce — collapse the stack with a binary op
+;; ---------------------------------------------------------------
+(t/deftest reduce-basic
+  (t/is (= [6.0] (submit->stack "reduce +" [1 2 3])))
+  (t/is (= [24.0] (submit->stack "reduce *" [2 3 4])))
+  (t/is (= [5.0] (submit->stack "reduce -" [10 3 2]))))
+
+;; reduce with init value
+(t/deftest reduce-with-init
+  (t/is (= [16.0] (submit->stack "reduce + 10" [1 2 3])))
+  (t/is (= [10.0] (submit->stack "reduce + 10"))))
+
+;; reduce single element
+(t/deftest reduce-single
+  (t/is (= [7.0] (submit->stack "reduce +" [7]))))
+
+;; reduce errors
+(t/deftest reduce-errors
+  ;; empty stack with no init
+  (t/is (= "Stack empty" (:status (submit->state "reduce +" []))))
+  (t/is (= [] (:stack (submit->state "reduce +" []))))
+  ;; unknown op
+  (t/is (= "Unknown: foo" (:status (submit->state "reduce foo" [1 2]))))
+  (t/is (= [1 2] (:stack (submit->state "reduce foo" [1 2]))))
+  ;; unary op
+  (t/is (= "Unknown: chs" (:status (submit->state "reduce chs" [1 2]))))
+  (t/is (= [1 2] (:stack (submit->state "reduce chs" [1 2])))))
+
+;; reduce info messages
+(t/deftest reduce-info
+  (t/is (= "(reduce + stack)" (:info (submit->state "reduce +" [1 2 3]))))
+  (t/is (= "(reduce * stack)" (:info (submit->state "reduce *" [2 3 4]))))
+  (t/is (= "(reduce - stack)" (:info (submit->state "reduce -" [10 3 2]))))
+  (t/is (= "(reduce + 10 stack)" (:info (submit->state "reduce + 10" [1 2 3])))))
+
+;; reduce button and flash
+(t/deftest reduce-button-and-flash
+  (t/is (= "reduce" (tc/button-for-token "reduce")))
+  (t/is (= "reduce" (tc/flash-for-action (typed fresh "reduce") "enter"))))
+
+;; ---------------------------------------------------------------
+;; Regression tests for map/reduce bugs (fix-map-reduce.md)
+;; ---------------------------------------------------------------
+;; Bug 1: Typed operator keys fire instantly when input is not blank/number
+;; Outside a prompt, typing "map " then "+" should NOT execute + immediately
+(t/deftest map-operator-key-does-not-fire-instantly
+  ;; Type "map " then press "+": stack unchanged, input is "map +"
+  ;; Message map structure: {:type :key-press, :key "+", :alt false, :ctrl false, :shift false}
+  ;; update-fn returns [state command]
+  (let [state1 (typed fresh "map ")
+        msg-plus {:type :key-press :key "+" :alt false :ctrl false :shift false}
+        [state2 _cmd] (tc/update-fn state1 msg-plus)]
+    (t/is (= [] (:stack state2)))
+    (t/is (= "map +" (apply str (:value (:input state2))))))
+  ;; "12" then "+" still adds (HP-style: number then op commits)
+  ;; Type "12" into input on stack [2], send key "+" -> [14.0]
+  (let [state1 (typed (assoc fresh :stack [2.0]) "12")
+        msg-plus {:type :key-press :key "+" :alt false :ctrl false :shift false}
+        [state2 _cmd] (tc/update-fn state1 msg-plus)]
+    (t/is (= [14.0] (:stack state2)))))
+
+;; Bug 2: Typed arg equal to X deletes X (remove the use-x-as-operand branch)
+(t/deftest map-arg-equal-to-x-does-not-delete
+  ;; [1 2 3 4] + map + 4 -> [5 6 7 8] (not [5 6 7])
+  (t/is (= [5.0 6.0 7.0 8.0] (submit->stack "map + 4" [1 2 3 4])))
+  ;; [5] + map + 5 -> [10] (not "Need two values")
+  (t/is (= [10.0] (submit->stack "map + 5" [5]))))
+
+;; Bug 3: reduce? prompt runs map (must call handle-reduce for pending "reduce")
+(t/deftest reduce-two-step-runs-reduce-not-map
+  ;; Start reduce prompt, then enter "+": should collapse to single value
+  (let [state1 (typed (assoc fresh :stack [1 2 3]) "reduce")
+        state2 (first (tc/submit state1))]
+    (t/is (= "reduce" (:pending state2)))
+    (t/is (= [1 2 3] (:stack state2)))
+    ;; Now type "+" and submit
+    (let [state3 (typed state2 "+")
+          state4 (first (tc/submit state3))]
+      (t/is (= [6.0] (:stack state4)))))
+  ;; Verify: [1 2 3] reduce + = 6, not [6 6 6] (which map + would give)
+  (t/is (= [6.0] (submit->stack "reduce +" [1 2 3]))))
+
+;; reduce? prompt with key press (RPN style)
+(t/deftest reduce-key-press-at-prompt
+  (let [msg-plus {:type :key-press :key "+" :alt false :ctrl false :shift false}]
+    ;; [1 2 3]: reduce Enter, key "+" -> [6]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "reduce")
+          [state2 _] (tc/submit state1)
+          [state3 _] (tc/update-fn state2 msg-plus)]
+      (t/is (= [6.0] (:stack state3))))
+    ;; [1 2 3]: reduce Enter, type "10", key "+" -> [16]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "reduce")
+          [state2 _] (tc/submit state1)
+          state3 (typed state2 "10")
+          [state4 _] (tc/update-fn state3 msg-plus)]
+      (t/is (= [16.0] (:stack state4))))))
+
+;; Bug 4: Number at map?/reduce? prompt crashes (no clause for map/reduce in case)
+(t/deftest number-at-map-prompt-no-crash
+  ;; At map? prompt, entering a number (not a valid level) -> "Unknown: N", no crash
+  (let [state1 (typed fresh "map")
+        state2 (first (tc/submit state1))]
+    (t/is (= "map" (:pending state2)))
+    ;; Now type a number and submit - this used to crash with IllegalArgumentException
+    (let [state3 (typed state2 "2")
+          state4 (first (tc/submit state3))]
+      (t/is (= "Unknown: 2" (:status state4)))
+      (t/is (= [] (:stack state4)))))
+  ;; Same for reduce
+  (let [state1 (typed fresh "reduce")
+        state2 (first (tc/submit state1))]
+    (t/is (= "reduce" (:pending state2)))
+    (let [state3 (typed state2 "3")
+          state4 (first (tc/submit state3))]
+      (t/is (= "Unknown: 3" (:status state4)))
+      (t/is (= [] (:stack state4))))))
+
+;; Bug 5: map foo on empty stack should say "Unknown: foo" (check op before empty-stack)
+(t/deftest map-unknown-op-on-empty-stack
+  (t/is (= "Unknown: foo" (:status (submit->state "map foo"))))
+  (t/is (= [] (:stack (submit->state "map foo"))))
+  ;; Same for reduce - note: "bar" is parsed as the op, not "reduce bar"
+  (t/is (= "Unknown: bar" (:status (submit->state "reduce bar"))))
+  (t/is (= [] (:stack (submit->state "reduce bar")))))
+
+;; RPN-style operator key at map?/reduce? prompt (amendment to bug 1)
+(t/deftest rpn-operator-key-at-map-prompt
+  ;; Message map: {:type :key-press, :key "+", :alt false, :ctrl false, :shift false}
+  ;; update-fn returns [state command]
+  (let [msg-plus {:type :key-press :key "+" :alt false :ctrl false :shift false}
+        msg-minus {:type :key-press :key "-" :alt false :ctrl false :shift false}]
+    ;; [1 2 3]: map Enter, type "4", key "+" -> [5.0 6.0 7.0]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "map")
+          [state2 _] (tc/submit state1)
+          state3 (typed state2 "4")
+          [state4 _] (tc/update-fn state3 msg-plus)]
+      (t/is (= [5.0 6.0 7.0] (:stack state4))))
+    ;; [1 2 3 10]: map Enter, key "+" -> [11 12 13] (X=10 is operand)
+    (let [state1 (assoc fresh :stack [1 2 3 10])
+          state2 (typed state1 "map")
+          [state3 _] (tc/submit state2)
+          [state4 _] (tc/update-fn state3 msg-plus)]
+      (t/is (= [11.0 12.0 13.0] (mapv double (:stack state4)))))
+    ;; [1 2 3]: reduce Enter, key "+" -> [6]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "reduce")
+          [state2 _] (tc/submit state1)
+          [state3 _] (tc/update-fn state2 msg-plus)]
+      (t/is (= [6.0] (:stack state3))))
+    ;; [1 2 3]: reduce Enter, type "10", key "+" -> [16]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "reduce")
+          [state2 _] (tc/submit state1)
+          state3 (typed state2 "10")
+          [state4 _] (tc/update-fn state3 msg-plus)]
+      (t/is (= [16.0] (:stack state4))))
+    ;; [1 2 3]: map Enter, type "1", key "-" -> [0 1 2]
+    (let [state1 (typed (assoc fresh :stack [1 2 3]) "map")
+          [state2 _] (tc/submit state1)
+          state3 (typed state2 "1")
+          [state4 _] (tc/update-fn state3 msg-minus)]
+      (t/is (= [0.0 1.0 2.0] (:stack state4))))))
+
+;; ---------------------------------------------------------------
+;; Two-step prompt: map? / reduce?
+;; ---------------------------------------------------------------
+(t/deftest map-two-step-prompt
+  ;; bare map starts prompt
+  (t/is (= "map" (:pending (submit->state "map" [1 2 3]))))
+  (t/is (= [1 2 3] (:stack (submit->state "map" [1 2 3]))))
+  ;; empty input cancels (no dup)
+  (t/is (= [1 2 3] (:stack (submit->state "map" [1 2 3])))))
+
+(t/deftest reduce-two-step-prompt
+  ;; bare reduce starts prompt
+  (t/is (= "reduce" (:pending (submit->state "reduce" [1 2 3]))))
+  (t/is (= [1 2 3] (:stack (submit->state "reduce" [1 2 3])))))
 
 ;; ---------------------------------------------------------------
 ;; Run
