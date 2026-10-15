@@ -693,13 +693,21 @@
 ;; charm's resize path only re-diffs against the previous frame, so a
 ;; resize (e.g. Herdr laying out a pane after launch) leaves a stale
 ;; copy of the calculator on screen. Clear and force a full repaint.
+;;
+;; render/repaint! can't do that: charm builds a non-fullscreen JLine
+;; Display, whose .clear is a no-op. The Display would keep diffing
+;; against the frame we just wiped, and an unchanged frame (the usual
+;; case at launch) wrote nothing -- a blank screen until a keypress.
+;; Instead render an empty frame first, so the Display forgets the old
+;; one and parks its cursor at the top, then wipe the real screen. The
+;; program loop renders the view right after this, in full.
 (defn clear-on-resize! []
   (alter-var-root #'render/update-size!
                   (fn [orig]
                     (fn [renderer width height]
                       (orig renderer width height)
-                      (render/clear-screen! renderer)
-                      (render/repaint! renderer)))))
+                      (.update (:display @renderer) (java.util.ArrayList.) -1)
+                      (render/clear-screen! renderer)))))
 
 (defn -main [& _]
   (clear-on-resize!)
