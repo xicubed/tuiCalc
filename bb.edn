@@ -1,6 +1,8 @@
 {:paths ["src" "test"]
  :deps {io.github.TimoKramer/charm.clj
-        {:git/sha "718daf3291b767f90cfe9ca9389f147bb83d58cd"}}
+        {:git/sha "718daf3291b767f90cfe9ca9389f147bb83d58cd"}
+        nrepl/nrepl
+        {:mvn/version "1.1.1"}}
  :tasks {test {:doc "Run the tuiCalc test suite (exits non-zero on failure)"
                :task (let [r (clojure.java.shell/sh "bb" "test/tuiCalc_test.clj")]
                        (println (str (:out r) (:err r)))

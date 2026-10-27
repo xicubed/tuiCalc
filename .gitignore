@@ -102,3 +102,4 @@ pom.xml.asc
 
 # macOS
 .DS_Store
+.lsp/.cache/
