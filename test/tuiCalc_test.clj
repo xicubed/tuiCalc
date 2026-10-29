@@ -456,13 +456,92 @@
   (t/is (= "linreg" (tc/button-for-token "linreg")))
   (t/is (= "linreg" (tc/button-for-token "lr"))))
 
+;; ---------------------------------------------------------------
+;; nice-step — grid step calculation for blueprint plot
+;; ---------------------------------------------------------------
+(t/deftest nice-step
+  (t/is (= 1.0 (tc/nice-step 10 10)))
+  (t/is (= 20.0 (tc/nice-step 100 8)))
+  (t/is (approx= 0.5 (tc/nice-step 3 8))))
+
+;; ---------------------------------------------------------------
+;; plot-html — pure HTML generation (never execute the cmd's fn)
+;; ---------------------------------------------------------------
+(t/deftest plot-html-basic
+  (let [html (tc/plot-html [[0 1] [1 3] [2 5]] 2.0 1.0)]
+    (t/is (string? html))
+    (t/is (clojure.string/includes? html "<svg"))
+    (t/is (clojure.string/includes? html "y = 2x"))
+    (t/is (clojure.string/includes? html "+ 1"))
+    (t/is (= 3 (count (re-seq #"<circle" html))))))
+
+(t/deftest plot-html-flat-y
+  (let [html (tc/plot-html [[0 2] [1 2]] 0.0 2.0)]
+    (t/is (string? html))
+    (t/is (not (clojure.string/includes? html "NaN")))
+    (t/is (not (clojure.string/includes? html "Infinity")))))
+
+(t/deftest plot-html-blueprint
+  (let [html (tc/plot-html [[0 1] [1 3] [2 5]] 2.0 1.0 "2026-10-29")]
+    (t/is (string? html))
+    (t/is (clojure.string/includes? html "LINEAR REGRESSION"))
+    (t/is (clojure.string/includes? html "DATE"))
+    (t/is (clojure.string/includes? html "2026-10-29"))
+    (t/is (clojure.string/includes? html "POINTS"))
+    (t/is (clojure.string/includes? html ">3<"))
+    (t/is (clojure.string/includes? html "y = 2x"))
+    (t/is (clojure.string/includes? html "+ 1"))
+    (t/is (clojure.string/includes? html "<title>1, 3</title>"))
+    (t/is (= 3 (count (re-seq #"<circle" html))))
+    (t/is (not (clojure.string/includes? html "NaN")))
+    (t/is (not (clojure.string/includes? html "Infinity")))
+    (t/is (nil? (re-find #"[^#]>\d+/\d+<" html)))))  ; no uncoerced ratios in attributes
+
+(t/deftest plot-html-arity-3
+  (let [html (tc/plot-html [[0 1] [1 3]] 1.0 0.5)]
+    (t/is (string? html))
+    (t/is (clojure.string/includes? html "LINEAR REGRESSION"))))
+
+;; ---------------------------------------------------------------
+;; sig6 — 6-significant-digit formatting
+;; ---------------------------------------------------------------
+(t/deftest sig6
+  (t/is (= "2" (tc/sig6 2.0)))
+  (t/is (= "0.882353" (tc/sig6 0.8823529411764706)))
+  (t/is (= "1.83824" (tc/sig6 1.838235294117647))))
+
+;; ---------------------------------------------------------------
+;; linreg info with negative intercept
+;; ---------------------------------------------------------------
+(t/deftest linreg-info-negative-intercept
+  (t/is (= "y = 2x − 1  (3 points)"
+           (:info (submit->state "lr" [0 -1 1 1 2 3])))))
+
+(t/deftest linreg-submit-returns-cmd-on-success
+  (let [state (first (tc/init))
+        state (assoc state :stack [0 1 1 3 2 5])
+        state (typed state "lr")
+        [result-state cmd] (tc/submit state)]
+    (t/is (= :cmd (:type cmd)))
+    (t/is (= [2.0 1.0] (:stack result-state))))
+  ;; odd count returns nil cmd
+  (let [state (first (tc/init))
+        state (assoc state :stack [1 2 3])
+        state (typed state "lr")
+        [result-state cmd] (tc/submit state)]
+    (t/is (nil? cmd))
+    (t/is (= "Need x y pairs" (:status result-state)))))
+
+;; ---------------------------------------------------------------
+;; linreg-run-action
+;; ---------------------------------------------------------------
 (t/deftest linreg-run-action
   (let [state (assoc (first (tc/init)) :stack [0 1 1 3 2 5])
         ret (tc/run-action state "linreg")
         [result-state cmd] ret]
     (t/is (vector? ret))
     (t/is (= 2 (count ret)))
-    (t/is (nil? cmd))
+    (t/is (= :cmd (:type cmd)))
     (t/is (approx= 2.0 (first (:stack result-state))))
     (t/is (approx= 1.0 (second (:stack result-state))))))
 

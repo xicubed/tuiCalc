@@ -2,6 +2,7 @@
 
 (ns tuiCalc
   (:require
+   [babashka.process :as process]
    [charm.components.text-input :as text-input]
    [charm.message :as msg]
    [charm.program :as program]
@@ -238,6 +239,176 @@
       (str (long n))
       (str n))))
 
+;; Format with 6 significant figures for display.
+(defn sig6 [v]
+  (format-num-for-info (Double/parseDouble (format "%.6g" (double v)))))
+
+;; Compute a nice grid step for a given span and target tick count.
+;; Uses 1-2-5-10 progression.
+(defn nice-step [span target-ticks]
+  (let [raw (/ span target-ticks)
+        mag (Math/pow 10 (Math/floor (Math/log10 raw)))
+        norm (/ raw mag)
+        step (cond
+               (<= norm 1) 1
+               (<= norm 2) 2
+               (<= norm 5) 5
+               :else 10)]
+    (* mag step)))
+
+;; Format tick labels cleanly (round to 9 decimals to avoid 0.15000000000000002).
+(defn tick-label [v]
+  (format-num-for-info (/ (Math/round (* v 1e9)) 1e9)))
+
+;; Generate HTML page with SVG blueprint-style plot.
+;; Two arities: [points m b date] and [points m b] (uses today's date).
+(defn plot-html
+  ([points m b]
+   (plot-html points m b (str (java.time.LocalDate/now))))
+  ([points m b date]
+   (let [xs (map first points)
+         ys (map second points)
+         xmin (apply min xs) xmax (apply max xs)
+         ymin (apply min ys) ymax (apply max ys)
+         ;; Include line endpoints in y range
+         y-at-xmin (+ (* m xmin) b)
+         y-at-xmax (+ (* m xmax) b)
+         ymin (min ymin y-at-xmin y-at-xmax)
+         ymax (max ymax y-at-xmin y-at-xmax)
+         ;; Widen zero spans first
+         xmin (if (zero? (- xmax xmin)) (dec xmin) xmin)
+         xmax (if (zero? (- xmax xmin)) (inc xmax) xmax)
+         ymin (if (zero? (- ymax ymin)) (dec ymin) ymin)
+         ymax (if (zero? (- ymax ymin)) (inc ymax) ymax)
+         ;; Compute nice steps
+         x-span (- xmax xmin) y-span (- ymax ymin)
+         x-step (nice-step x-span 10) y-step (nice-step y-span 10)
+         ;; Integer multiples for majors
+         kx0 (long (Math/floor (/ xmin x-step)))
+         kx1 (long (Math/ceil (/ xmax x-step)))
+         ky0 (long (Math/floor (/ ymin y-step)))
+         ky1 (long (Math/ceil (/ ymax y-step)))
+         ;; Majors as integer multiples
+         x-majors (map #(* (double %) x-step) (range kx0 (inc kx1)))
+         y-majors (map #(* (double %) y-step) (range ky0 (inc ky1)))
+         ;; Set xmin/xmax to first/last major
+         xmin (double (first x-majors))
+         xmax (double (last x-majors))
+         ymin (double (first y-majors))
+         ymax (double (last y-majors))
+         ;; Page dimensions
+         width 960 height 680
+         ;; Plot area
+         plot-x0 100 plot-y0 50 plot-x1 920 plot-y1 500
+         plot-w (- plot-x1 plot-x0) plot-h (- plot-y1 plot-y0)
+         ;; Coerce to doubles
+         xmin (double xmin) xmax (double xmax)
+         ymin (double ymin) ymax (double ymax)
+         m (double m) b (double b)
+         ;; Scale functions
+         px (fn [x] (+ plot-x0 (* (/ (- x xmin) (- xmax xmin)) plot-w)))
+         py (fn [y] (- plot-y1 (* (/ (- y ymin) (- ymax ymin)) plot-h)))
+         n (count points)
+         ;; Minor grid: for each major k, j=1..4 -> (* (+ k j/5) step)
+         ;; Only up to but NOT including the last major (range k0 k1, not (inc k1))
+         x-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) x-step) (range 1 5))) (range kx0 kx1))
+         y-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) y-step) (range 1 5))) (range ky0 ky1))
+         grid-lines (str/join "\n"
+                              (concat
+                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" plot-y0 "\" x2=\"" (px x) "\" y2=\"" plot-y1 "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
+                                    x-minors)
+                               (map (fn [y] (str "<line x1=\"" plot-x0 "\" y1=\"" (py y) "\" x2=\"" plot-x1 "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
+                                    y-minors)
+                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" plot-y0 "\" x2=\"" (px x) "\" y2=\"" plot-y1 "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
+                                    x-majors)
+                               (map (fn [y] (str "<line x1=\"" plot-x0 "\" y1=\"" (py y) "\" x2=\"" plot-x1 "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
+                                    y-majors)))
+         x-labels (str/join "\n"
+                            (map (fn [x] (str "<text x=\"" (px x) "\" y=\"" (+ plot-y1 20) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"middle\">" (tick-label x) "</text>"))
+                                 x-majors))
+         y-labels (str/join "\n"
+                            (map (fn [y] (str "<text x=\"90\" y=\"" (+ (py y) 4) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"end\">" (tick-label y) "</text>"))
+                                 y-majors))
+         circles (str/join "\n"
+                           (map (fn [[x y]]
+                                  (str "<circle cx=\"" (px x) "\" cy=\"" (py y) "\" r=\"7\" fill=\"#1f4e9a\" stroke=\"#f4f1e6\" stroke-width=\"2\"><title>" (tick-label x) ", " (tick-label y) "</title></circle>"))
+                                points))
+         line-ymin (py (+ (* m xmin) b))
+         line-ymax (py (+ (* m xmax) b))
+         m-sig (sig6 m)
+         b-sig (sig6 (if (neg? b) (- b) b))
+         eq-line1 (str "y = " m-sig "x")
+         eq-line2 (if (neg? b)
+                    (str "− " b-sig)
+                    (str "+ " b-sig))]
+     (str
+      "<!doctype html>\n"
+      "<html>\n"
+      "<head>\n"
+      "<title>tuiCalc linreg</title>\n"
+      "<link href=\"https://fonts.googleapis.com/css2?family=Architects+Daughter&display=swap\" rel=\"stylesheet\">\n"
+      "<style>\n"
+      "circle:hover { r: 10; stroke: #f4f1e6; stroke-width: 3; }\n"
+      "</style>\n"
+      "</head>\n"
+      "<body style=\"background:#f4f1e6;margin:0;padding:20px;font-family:'Architects Daughter','Courier New',monospace;\">\n"
+      "<svg width=\"" width "\" height=\"" height "\" style=\"display:block;\">\n"
+      "<!-- heavy border -->\n"
+      "<rect x=\"15\" y=\"15\" width=\"" (- width 30) "\" height=\"" (- height 30) "\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"5\"/>\n"
+            "<!-- grid -->\n"
+      grid-lines "\n"
+      "<!-- axis titles -->\n"
+      "<text x=\"" (/ (+ plot-x0 plot-x1) 2) "\" y=\"540\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\">X</text>\n"
+      "<text x=\"50\" y=\"" (+ plot-y0 (/ plot-h 2)) "\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\" transform=\"rotate(-90 50 " (+ plot-y0 (/ plot-h 2)) ")\">Y</text>\n"
+      "<!-- x labels -->\n"
+      x-labels "\n"
+      "<!-- y labels -->\n"
+      y-labels "\n"
+      "<!-- fit line -->\n"
+      "<line x1=\"" (px xmin) "\" y1=\"" line-ymin "\" x2=\"" (px xmax) "\" y2=\"" line-ymax "\" stroke=\"#1f4e9a\" stroke-width=\"3\"/>\n"
+      "<!-- points -->\n"
+      circles "\n"
+      "<!-- title block below plot -->\n"
+      "<rect x=\"100\" y=\"560\" width=\"820\" height=\"90\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"2\"/>\n"
+      "<line x1=\"350\" y1=\"560\" x2=\"350\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"520\" y1=\"560\" x2=\"520\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"590\" y1=\"560\" x2=\"590\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"700\" y1=\"560\" x2=\"700\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"800\" y1=\"560\" x2=\"800\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"860\" y1=\"560\" x2=\"860\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<text x=\"110\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">TITLE</text>\n"
+      "<text x=\"110\" y=\"605\" fill=\"#1f4e9a\" font-size=\"20\" font-weight=\"bold\">LINEAR REGRESSION</text>\n"
+      "<text x=\"360\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">EQUATION</text>\n"
+      "<text x=\"360\" y=\"605\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line1 "</text>\n"
+      "<text x=\"360\" y=\"627\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line2 "</text>\n"
+      "<text x=\"530\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">POINTS</text>\n"
+      "<text x=\"530\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">" n "</text>\n"
+      "<text x=\"600\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DATE</text>\n"
+      "<text x=\"600\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">" date "</text>\n"
+      "<text x=\"710\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DRAWN BY</text>\n"
+      "<text x=\"710\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">tuiCalc</text>\n"
+      "<text x=\"810\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SCALE</text>\n"
+      "<text x=\"810\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">NTS</text>\n"
+      "<text x=\"870\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SHEET</text>\n"
+      "<text x=\"870\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">1 OF 1</text>\n"
+      "</svg>\n"
+      "</body>\n"
+      "</html>"))))
+
+;; Command to write HTML to temp file and open in browser.
+(defn plot-cmd [html]
+  (program/cmd
+   (fn []
+     (let [path (str (System/getProperty "java.io.tmpdir") "/tuiCalc-plot.html")
+           os-name (System/getProperty "os.name")
+           opener (if (re-find #"(?i)mac" os-name) "open" "xdg-open")]
+       (try
+         (spit path html)
+         (process/shell opener path)
+         {:type :plot-opened}
+         (catch Exception e
+           {:type :plot-opened :error (ex-message e)}))))))
+
 ;; Linear regression over the whole stack (HP-15c L.R.).
 ;; Stack holds points as flattened pairs: x1 y1 x2 y2 ... (push order).
 ;; Returns [m b] with intercept b in X (last), slope m in Y.
@@ -258,10 +429,22 @@
       (zero? denom) (assoc state :status "Vertical line")
       :else (let [m (/ (- (* n-sum sxy) (* sx sy)) denom)
                   b (/ (- sy (* m sx)) n-sum)
-                  info-str (str "y = " (format-num-for-info m) "x + "
-                                (format-num-for-info b)
+                  m-sig (sig6 m)
+                  b-sig (sig6 (if (neg? b) (- b) b))
+                  info-str (str "y = " m-sig "x "
+                                (if (neg? b) "− " "+ ") b-sig
                                 "  (" point-count " points)")]
               (assoc state :stack [m b] :info info-str)))))
+
+;; Linear regression action: computes regression and returns [state' cmd].
+;; If successful (no :status), cmd opens browser plot; otherwise cmd is nil.
+(defn linreg-action [state]
+  (let [state' (linreg state)]
+    (if (:status state')
+      [state' nil]
+      (let [[m b] (:stack state')
+            points (partition 2 (:stack state))]
+        [state' (plot-cmd (plot-html points m b))]))))
 
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
@@ -455,7 +638,7 @@
 
       ;; Linear regression (HP-15c L.R.).
       (#{"linreg" "lr"} token)
-      [(linreg state) nil]
+      (linreg-action state)
 
       ;; Get the value at level <i> (dup/roll). No level yet: start a
       ;; two-step prompt -- the input box itself becomes "get? " and
@@ -607,7 +790,7 @@
                                         "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
     "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
                                         "[start] op: +, *, /, 10 + (sum+10)") nil]
-    "linreg"  [(linreg state) nil]
+    "linreg"  (linreg-action state)
     "q"       [state program/quit-cmd]
     "enter"   (submit state)
     [(execute-op state action) nil]))
@@ -686,7 +869,7 @@
                       [state nil]
                       (run-action state btn))]
         [(with-flash s' (flash-for-action state btn))
-         (or c' (flash-cmd))])
+         (if c' (program/batch c' (flash-cmd)) (flash-cmd))])
       [state nil])))
 
 ;; ------------------------------------------------------------
@@ -726,6 +909,10 @@
           [(assoc state :flash (update flash :frame inc)) (flash-cmd)]
           [(dissoc state :flash) nil]))
 
+      ;; Plot opened (or failed).
+      (= :plot-opened (:type message))
+      [(cond-> state (:error message) (assoc :status (str "Plot: " (:error message)))) nil]
+
       ;; Mouse clicks on help-line buttons.
       (and (msg/mouse? message)
            (= :press (:action message))
@@ -749,7 +936,7 @@
         [(with-flash
           (if (= action "get") s' (abort-prompt s'))
           action)
-         (or c' (flash-cmd))])
+         (if c' (program/batch c' (flash-cmd)) (flash-cmd))])
 
       ;; RPN at a map?/reduce? prompt: an operator key (including -)
       ;; runs it now, with whatever number was typed as the arg/init:
@@ -765,7 +952,7 @@
       (let [line    (str/trim (str key " " (text-input/value (:input state))))
             [s' c'] (submit (update state :input assoc
                                     :value (vec line) :pos (count line)))]
-        [(with-flash s' (:pending state)) (or c' (flash-cmd))])
+        [(with-flash s' (:pending state)) (if c' (program/batch c' (flash-cmd)) (flash-cmd))])
 
       ;; Operators execute immediately (keyboard shortcuts, except - for
       ;; negative numbers and x so words like "exit" can be typed) --
@@ -792,7 +979,7 @@
       (msg/key-match? message :enter)
       (let [[s' c'] (submit state)]
         [(with-flash s' (flash-for-action state "enter"))
-         (or c' (flash-cmd))])
+         (if c' (program/batch c' (flash-cmd)) (flash-cmd))])
 
       ;; Everything else goes into the text field.
       :else
