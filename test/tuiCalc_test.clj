@@ -502,6 +502,11 @@
     (t/is (string? html))
     (t/is (clojure.string/includes? html "LINEAR REGRESSION"))))
 
+(t/deftest plot-html-viewbox-and-clip
+  (let [html (tc/plot-html [[0 1] [1 3] [2 5]] 2.0 1.0 "2026-10-29")]
+    (t/is (clojure.string/includes? html "viewBox=\"0 0 960 1000\""))
+    (t/is (clojure.string/includes? html "clip-path="))))
+
 ;; ---------------------------------------------------------------
 ;; sig6 — 6-significant-digit formatting
 ;; ---------------------------------------------------------------
@@ -516,6 +521,41 @@
 (t/deftest linreg-info-negative-intercept
   (t/is (= "y = 2x − 1  (3 points)"
            (:info (submit->state "lr" [0 -1 1 1 2 3])))))
+
+;; ---------------------------------------------------------------
+;; plot-geometry — equal-scale square graph paper with near-origin axes
+;; ---------------------------------------------------------------
+(t/deftest plot-geometry-near-origin
+  (let [g (tc/plot-geometry [[4 5] [6 6.5] [7 7.2] [10 10.4]] 0.905333 1.164)]
+    (t/is (= 0.0 (:xmin g)))
+    (t/is (= 0.0 (:ymin g)))))
+
+(t/deftest plot-geometry-origin-always-included
+  (let [g (tc/plot-geometry [[1000 1] [1010 2]] 0.1 -99)]
+    (t/is (= 0.0 (:xmin g)))
+    (t/is (= 0.0 (:ymin g)))))
+
+(t/deftest plot-geometry-square-cluster
+  (let [g (tc/plot-geometry [[8 8] [9 9] [10 10]] 1.0 0.0)]
+    (t/is (= 0.0 (:xmin g)))
+    (t/is (= 0.0 (:ymin g)))
+    (t/is (approx= (:w g) (:h g)))))
+
+(t/deftest plot-geometry-equal-scale
+  ;; Case 1: near-origin points
+  (let [g1 (tc/plot-geometry [[4 5] [6 6.5] [7 7.2] [10 10.4]] 0.905333 1.164)]
+    (t/is (approx= (:w g1) (* (:scale g1) (- (:xmax g1) (:xmin g1)))))
+    (t/is (approx= (:h g1) (* (:scale g1) (- (:ymax g1) (:ymin g1)))))
+    (t/is (<= (:w g1) 760.0001))
+    (t/is (<= (:h g1) 760.0001))
+    (t/is (or (approx= (:w g1) 760) (approx= (:h g1) 760))))
+  ;; Case 2: far-from-origin points (now includes origin)
+  (let [g2 (tc/plot-geometry [[1000 1] [1010 2]] 0.1 -99)]
+    (t/is (approx= (:w g2) (* (:scale g2) (- (:xmax g2) (:xmin g2)))))
+    (t/is (approx= (:h g2) (* (:scale g2) (- (:ymax g2) (:ymin g2)))))
+    (t/is (<= (:w g2) 760.0001))
+    (t/is (<= (:h g2) 760.0001))
+    (t/is (or (approx= (:w g2) 760) (approx= (:h g2) 760)))))
 
 (t/deftest linreg-submit-returns-cmd-on-success
   (let [state (first (tc/init))

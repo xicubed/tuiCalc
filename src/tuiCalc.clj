@@ -260,74 +260,103 @@
 (defn tick-label [v]
   (format-num-for-info (/ (Math/round (* v 1e9)) 1e9)))
 
+;; Compute plot geometry with equal-scale square grid.
+;; Returns {:xmin :xmax :ymin :ymax :step :scale :x0 :y0 :w :h}.
+(defn plot-geometry [points m b]
+  (let [xs (map first points)
+        ys (map second points)
+        xmin (apply min xs) xmax (apply max xs)
+        ymin (apply min ys) ymax (apply max ys)
+        ;; Include line endpoints in y range
+        y-at-xmin (+ (* m xmin) b)
+        y-at-xmax (+ (* m xmax) b)
+        ymin (min ymin y-at-xmin y-at-xmax)
+        ymax (max ymax y-at-xmin y-at-xmax)
+        ;; Widen zero spans first
+        xmin (if (zero? (- xmax xmin)) (dec xmin) xmin)
+        xmax (if (zero? (- xmax xmin)) (inc xmax) xmax)
+        ymin (if (zero? (- ymax ymin)) (dec ymin) ymin)
+        ymax (if (zero? (- ymax ymin)) (inc ymax) ymax)
+        ;; Always include origin
+        xmin (min xmin 0) xmax (max xmax 0)
+        ymin (min ymin 0) ymax (max ymax 0)
+        ;; Recompute spans after near-origin adjustment
+        x-span (- xmax xmin) y-span (- ymax ymin)
+        ;; One shared step from the larger span
+        shared-step (nice-step (max x-span y-span) 10)
+        ;; Integer multiples for snapping
+        kx0 (long (Math/floor (/ xmin shared-step)))
+        kx1 (long (Math/ceil (/ xmax shared-step)))
+        ky0 (long (Math/floor (/ ymin shared-step)))
+        ky1 (long (Math/ceil (/ ymax shared-step)))
+        ;; Snap to whole multiples
+        xmin (double (* kx0 shared-step))
+        xmax (double (* kx1 shared-step))
+        ymin (double (* ky0 shared-step))
+        ymax (double (* ky1 shared-step))]
+    ;; Recompute spans after snapping
+    (let [x-span (- xmax xmin) y-span (- ymax ymin)
+          ;; Square box: 760 x 760 at x 130..890, y 50..810
+          box-w 760 box-h 760
+          ;; One shared scale (pixels per unit)
+          scale (min (/ box-w x-span) (/ box-h y-span))
+          w (* scale x-span) h (* scale y-span)
+          ;; Center in box
+          x0 (+ 130 (/ (- box-w w) 2))
+          y0 (+ 50 (/ (- box-h h) 2))]
+      {:xmin xmin :xmax xmax :ymin ymin :ymax ymax
+       :step shared-step :scale scale :x0 x0 :y0 y0 :w w :h h})))
+
 ;; Generate HTML page with SVG blueprint-style plot.
 ;; Two arities: [points m b date] and [points m b] (uses today's date).
 (defn plot-html
   ([points m b]
    (plot-html points m b (str (java.time.LocalDate/now))))
   ([points m b date]
-   (let [xs (map first points)
-         ys (map second points)
-         xmin (apply min xs) xmax (apply max xs)
-         ymin (apply min ys) ymax (apply max ys)
-         ;; Include line endpoints in y range
-         y-at-xmin (+ (* m xmin) b)
-         y-at-xmax (+ (* m xmax) b)
-         ymin (min ymin y-at-xmin y-at-xmax)
-         ymax (max ymax y-at-xmin y-at-xmax)
-         ;; Widen zero spans first
-         xmin (if (zero? (- xmax xmin)) (dec xmin) xmin)
-         xmax (if (zero? (- xmax xmin)) (inc xmax) xmax)
-         ymin (if (zero? (- ymax ymin)) (dec ymin) ymin)
-         ymax (if (zero? (- ymax ymin)) (inc ymax) ymax)
-         ;; Compute nice steps
-         x-span (- xmax xmin) y-span (- ymax ymin)
-         x-step (nice-step x-span 10) y-step (nice-step y-span 10)
-         ;; Integer multiples for majors
-         kx0 (long (Math/floor (/ xmin x-step)))
-         kx1 (long (Math/ceil (/ xmax x-step)))
-         ky0 (long (Math/floor (/ ymin y-step)))
-         ky1 (long (Math/ceil (/ ymax y-step)))
-         ;; Majors as integer multiples
-         x-majors (map #(* (double %) x-step) (range kx0 (inc kx1)))
-         y-majors (map #(* (double %) y-step) (range ky0 (inc ky1)))
-         ;; Set xmin/xmax to first/last major
-         xmin (double (first x-majors))
-         xmax (double (last x-majors))
-         ymin (double (first y-majors))
-         ymax (double (last y-majors))
+   (let [geom (plot-geometry points m b)
+         xmin (:xmin geom) xmax (:xmax geom)
+         ymin (:ymin geom) ymax (:ymax geom)
+         step (:step geom) scale (:scale geom)
+         x0 (:x0 geom) y0 (:y0 geom) w (:w geom) h (:h geom)
          ;; Page dimensions
-         width 960 height 680
-         ;; Plot area
-         plot-x0 100 plot-y0 50 plot-x1 920 plot-y1 500
-         plot-w (- plot-x1 plot-x0) plot-h (- plot-y1 plot-y0)
-         ;; Coerce to doubles
-         xmin (double xmin) xmax (double xmax)
-         ymin (double ymin) ymax (double ymax)
-         m (double m) b (double b)
-         ;; Scale functions
-         px (fn [x] (+ plot-x0 (* (/ (- x xmin) (- xmax xmin)) plot-w)))
-         py (fn [y] (- plot-y1 (* (/ (- y ymin) (- ymax ymin)) plot-h)))
+         width 960 height 1000
          n (count points)
+         ;; Integer multiples for majors
+         kx0 (long (Math/floor (/ xmin step)))
+         kx1 (long (Math/ceil (/ xmax step)))
+         ky0 (long (Math/floor (/ ymin step)))
+         ky1 (long (Math/ceil (/ ymax step)))
+         x-majors (map #(* (double %) step) (range kx0 (inc kx1)))
+         y-majors (map #(* (double %) step) (range ky0 (inc ky1)))
+         ;; Scale functions using geometry
+         px (fn [x] (+ x0 (* (- x xmin) scale)))
+         py (fn [y] (- (+ y0 h) (* (- y ymin) scale)))
          ;; Minor grid: for each major k, j=1..4 -> (* (+ k j/5) step)
-         ;; Only up to but NOT including the last major (range k0 k1, not (inc k1))
-         x-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) x-step) (range 1 5))) (range kx0 kx1))
-         y-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) y-step) (range 1 5))) (range ky0 ky1))
+         x-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) step) (range 1 5))) (range kx0 kx1))
+         y-minors (mapcat (fn [k] (map #(* (+ k (/ % 5.0)) step) (range 1 5))) (range ky0 ky1))
          grid-lines (str/join "\n"
                               (concat
-                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" plot-y0 "\" x2=\"" (px x) "\" y2=\"" plot-y1 "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
+                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" y0 "\" x2=\"" (px x) "\" y2=\"" (+ y0 h) "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
                                     x-minors)
-                               (map (fn [y] (str "<line x1=\"" plot-x0 "\" y1=\"" (py y) "\" x2=\"" plot-x1 "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
+                               (map (fn [y] (str "<line x1=\"" x0 "\" y1=\"" (py y) "\" x2=\"" (+ x0 w) "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1\" opacity=\"0.5\"/>"))
                                     y-minors)
-                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" plot-y0 "\" x2=\"" (px x) "\" y2=\"" plot-y1 "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
+                               (map (fn [x] (str "<line x1=\"" (px x) "\" y1=\"" y0 "\" x2=\"" (px x) "\" y2=\"" (+ y0 h) "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
                                     x-majors)
-                               (map (fn [y] (str "<line x1=\"" plot-x0 "\" y1=\"" (py y) "\" x2=\"" plot-x1 "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
+                               (map (fn [y] (str "<line x1=\"" x0 "\" y1=\"" (py y) "\" x2=\"" (+ x0 w) "\" y2=\"" (py y) "\" stroke=\"#7fa6d6\" stroke-width=\"1.5\"/>"))
                                     y-majors)))
+         ;; Origin axes (if 0 is within range)
+         origin-axes (str
+                      (if (and (<= xmin 0) (>= xmax 0))
+                        (str "<line x1=\"" (px 0) "\" y1=\"" y0 "\" x2=\"" (px 0) "\" y2=\"" (+ y0 h) "\" stroke=\"#1f4e9a\" stroke-width=\"2\"/>\n")
+                        "")
+                      (if (and (<= ymin 0) (>= ymax 0))
+                        (str "<line x1=\"" x0 "\" y1=\"" (py 0) "\" x2=\"" (+ x0 w) "\" y2=\"" (py 0) "\" stroke=\"#1f4e9a\" stroke-width=\"2\"/>\n")
+                        ""))
          x-labels (str/join "\n"
-                            (map (fn [x] (str "<text x=\"" (px x) "\" y=\"" (+ plot-y1 20) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"middle\">" (tick-label x) "</text>"))
+                            (map (fn [x] (str "<text x=\"" (px x) "\" y=\"" (+ y0 h 20) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"middle\">" (tick-label x) "</text>"))
                                  x-majors))
          y-labels (str/join "\n"
-                            (map (fn [y] (str "<text x=\"90\" y=\"" (+ (py y) 4) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"end\">" (tick-label y) "</text>"))
+                            (map (fn [y] (str "<text x=\"" (- x0 10) "\" y=\"" (+ (py y) 4) "\" fill=\"#1f4e9a\" font-size=\"12\" text-anchor=\"end\">" (tick-label y) "</text>"))
                                  y-majors))
          circles (str/join "\n"
                            (map (fn [[x y]]
@@ -352,45 +381,51 @@
       "</style>\n"
       "</head>\n"
       "<body style=\"background:#f4f1e6;margin:0;padding:20px;font-family:'Architects Daughter','Courier New',monospace;\">\n"
-      "<svg width=\"" width "\" height=\"" height "\" style=\"display:block;\">\n"
+      "<svg viewBox=\"0 0 960 1000\" style=\"display:block;margin:0 auto;height:calc(100vh - 40px);width:auto;max-width:100%;\">\n"
       "<!-- heavy border -->\n"
-      "<rect x=\"15\" y=\"15\" width=\"" (- width 30) "\" height=\"" (- height 30) "\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"5\"/>\n"
-            "<!-- grid -->\n"
+      "<rect x=\"15\" y=\"15\" width=\"930\" height=\"970\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"5\"/>\n"
+      "<!-- clip path for fit line -->\n"
+      "<defs><clipPath id=\"plot-area\"><rect x=\"" x0 "\" y=\"" y0 "\" width=\"" w "\" height=\"" h "\"/></clipPath></defs>\n"
+      "<!-- grid -->\n"
       grid-lines "\n"
+      "<!-- origin axes -->\n"
+      origin-axes "\n"
       "<!-- axis titles -->\n"
-      "<text x=\"" (/ (+ plot-x0 plot-x1) 2) "\" y=\"540\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\">X</text>\n"
-      "<text x=\"50\" y=\"" (+ plot-y0 (/ plot-h 2)) "\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\" transform=\"rotate(-90 50 " (+ plot-y0 (/ plot-h 2)) ")\">Y</text>\n"
+      "<text x=\"" (+ x0 (/ w 2)) "\" y=\"" (+ y0 h 40) "\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\">X</text>\n"
+      "<text x=\"" (- x0 50) "\" y=\"" (+ y0 (/ h 2)) "\" fill=\"#1f4e9a\" font-size=\"18\" text-anchor=\"middle\" transform=\"rotate(-90 " (- x0 50) " " (+ y0 (/ h 2)) ")\">Y</text>\n"
       "<!-- x labels -->\n"
       x-labels "\n"
       "<!-- y labels -->\n"
       y-labels "\n"
       "<!-- fit line -->\n"
-      "<line x1=\"" (px xmin) "\" y1=\"" line-ymin "\" x2=\"" (px xmax) "\" y2=\"" line-ymax "\" stroke=\"#1f4e9a\" stroke-width=\"3\"/>\n"
+      "<line x1=\"" (px xmin) "\" y1=\"" line-ymin "\" x2=\"" (px xmax) "\" y2=\"" line-ymax "\" stroke=\"#1f4e9a\" stroke-width=\"3\" clip-path=\"url(#plot-area)\"/>\n"
+      "<!-- border around plot area -->\n"
+      "<rect x=\"" x0 "\" y=\"" y0 "\" width=\"" w "\" height=\"" h "\" fill=\"none\" stroke=\"#7fa6d6\" stroke-width=\"1\"/>\n"
       "<!-- points -->\n"
       circles "\n"
       "<!-- title block below plot -->\n"
-      "<rect x=\"100\" y=\"560\" width=\"820\" height=\"90\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"2\"/>\n"
-      "<line x1=\"350\" y1=\"560\" x2=\"350\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<line x1=\"520\" y1=\"560\" x2=\"520\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<line x1=\"590\" y1=\"560\" x2=\"590\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<line x1=\"700\" y1=\"560\" x2=\"700\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<line x1=\"800\" y1=\"560\" x2=\"800\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<line x1=\"860\" y1=\"560\" x2=\"860\" y2=\"650\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
-      "<text x=\"110\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">TITLE</text>\n"
-      "<text x=\"110\" y=\"605\" fill=\"#1f4e9a\" font-size=\"20\" font-weight=\"bold\">LINEAR REGRESSION</text>\n"
-      "<text x=\"360\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">EQUATION</text>\n"
-      "<text x=\"360\" y=\"605\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line1 "</text>\n"
-      "<text x=\"360\" y=\"627\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line2 "</text>\n"
-      "<text x=\"530\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">POINTS</text>\n"
-      "<text x=\"530\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">" n "</text>\n"
-      "<text x=\"600\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DATE</text>\n"
-      "<text x=\"600\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">" date "</text>\n"
-      "<text x=\"710\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DRAWN BY</text>\n"
-      "<text x=\"710\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">tuiCalc</text>\n"
-      "<text x=\"810\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SCALE</text>\n"
-      "<text x=\"810\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">NTS</text>\n"
-      "<text x=\"870\" y=\"580\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SHEET</text>\n"
-      "<text x=\"870\" y=\"605\" fill=\"#1f4e9a\" font-size=\"16\">1 OF 1</text>\n"
+      "<rect x=\"100\" y=\"880\" width=\"820\" height=\"90\" fill=\"none\" stroke=\"#1f4e9a\" stroke-width=\"2\"/>\n"
+      "<line x1=\"350\" y1=\"880\" x2=\"350\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"520\" y1=\"880\" x2=\"520\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"590\" y1=\"880\" x2=\"590\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"700\" y1=\"880\" x2=\"700\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"800\" y1=\"880\" x2=\"800\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<line x1=\"860\" y1=\"880\" x2=\"860\" y2=\"970\" stroke=\"#1f4e9a\" stroke-width=\"1\"/>\n"
+      "<text x=\"110\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">TITLE</text>\n"
+      "<text x=\"110\" y=\"925\" fill=\"#1f4e9a\" font-size=\"20\" font-weight=\"bold\">LINEAR REGRESSION</text>\n"
+      "<text x=\"360\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">EQUATION</text>\n"
+      "<text x=\"360\" y=\"925\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line1 "</text>\n"
+      "<text x=\"360\" y=\"947\" fill=\"#1f4e9a\" font-size=\"15\">" eq-line2 "</text>\n"
+      "<text x=\"530\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">POINTS</text>\n"
+      "<text x=\"530\" y=\"925\" fill=\"#1f4e9a\" font-size=\"16\">" n "</text>\n"
+      "<text x=\"600\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DATE</text>\n"
+      "<text x=\"600\" y=\"925\" fill=\"#1f4e9a\" font-size=\"16\">" date "</text>\n"
+      "<text x=\"710\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">DRAWN BY</text>\n"
+      "<text x=\"710\" y=\"925\" fill=\"#1f4e9a\" font-size=\"16\">tuiCalc</text>\n"
+      "<text x=\"810\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SCALE</text>\n"
+      "<text x=\"810\" y=\"925\" fill=\"#1f4e9a\" font-size=\"16\">NTS</text>\n"
+      "<text x=\"870\" y=\"900\" fill=\"#1f4e9a\" font-size=\"10\" opacity=\"0.7\">SHEET</text>\n"
+      "<text x=\"870\" y=\"925\" fill=\"#1f4e9a\" font-size=\"16\">1 OF 1</text>\n"
       "</svg>\n"
       "</body>\n"
       "</html>"))))
