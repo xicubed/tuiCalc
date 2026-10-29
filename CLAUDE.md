@@ -51,50 +51,74 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 - Maybe: make the two-step prompts look like an open form, `(map `, `(get `
   (trailing `?` means predicate in Clojure, and `map?` is a real fn).
 
-## Rat Pack demo (Herdr)
+## Crew demo (Herdr)
 
-Claude (Opus, the expensive one, stock Anthropic) is **dean**, head of the Rat
-Pack: dean manages and delegates, writes specs, and reviews every diff before
+Claude (stock Anthropic, the expensive one) is **Monet** (Herdr name `monet`):
+Monet manages and delegates, writes specs, and reviews every diff before
 anything is committed. The crew are Claude Code sessions on MindRouter, each in
-its own Herdr pane in the same tab, all with cwd `~/exp/fizz`:
+its own Herdr pane in the same tab, all with cwd `~/exp/fizz`. Naming: French,
+after Claude Monet. `M.` (Monsieur) doubles as **M**indRouter, so every `m-`
+pane is on MindRouter; Docteur is for docs (doc, M.D. = markdown). Docteur
+Murphy / `docteur-m` nods to Doctor Murphy ("Doctor M") of *Blade Runner:
+Black Lotus*, who works on replicants' memory programming — fitting, since
+the docs (this file especially) are the memory every session boots with.
 
-| Name | Model (`--model`) | Usual job |
-|---|---|---|
-| **sammy** | `default-llm-large` (qwen3.5-122b) | implements features in `src/` |
-| **peter** | `default-llm-large` (qwen3.5-122b) | writes + runs tests in `test/` |
-| **jerry** | `google/gemma-4-31b` | read-only review (on trial) |
+| Name | Herdr name | Model (`--model`) | Usual job |
+|---|---|---|---|
+| **Monet** | `monet` | `default` (Anthropic) | manage, spec, review correctness, commit |
+| **Docteur Murphy** | `docteur-m` | `moonshotai/kimi-k3` (on trial) | writes docs (`*.md`) |
+| **M. Automate** | `m-automate` | `qwen/qwen3.5-122b` | implements features in `src/` |
+| **M. Testeur** | `m-testeur` | `qwen/qwen3.5-122b` | writes tests in `test/` from the spec |
+| **M. Coureur** | `m-coureur` | `google/gemma-4-31b` | runs `bb test`, reports results |
+| **M. Critique** | `m-critique` | `google/gemma-4-31b` | read-only review of style + idiom |
 
-Workflow: one spec file in dean's scratchpad, sent to the builder and the tester
-at the same time; each owns one file (shared checkout, no worktrees for now).
-The tester writes from the spec, not the code, and only ADDS tests. On
-gpt-oss-120b jerry edited unrelated lines, called a nonexistent `Find` tool,
-and missed real bugs in review, so he was switched to gemma on 2026-10-15. Give
-new or unproven agents read-only or tightly scoped jobs, and review their
-diffs.
+Herdr names must start with a lowercase letter and use only `a-z 0-9 - _`
+(max 32), so no dots or spaces.
 
-Whenever dean prompts a crew member, start a background `herdr agent wait
-<name>` so their completion notifies dean, and report their reply to the user
+Workflow: one spec file in Monet's scratchpad, sent to M. Automate and
+M. Testeur at the same time; each owns one file (shared checkout, no worktrees
+for now). M. Testeur writes from the spec, not the code, and only ADDS tests.
+M. Critique keeps findings short and ranked, and must respect project
+constraints (e.g. function order in `src/tuiCalc.clj` is load-bearing). History:
+the old reviewer on gpt-oss-120b edited unrelated lines, called a nonexistent
+`Find` tool and missed real bugs, so give new or unproven agents read-only or
+tightly scoped jobs, and review their diffs.
+
+Whenever Monet prompts a crew member, start a background `herdr agent wait
+<name>` so their completion notifies Monet, and report their reply to the user
 immediately — don't wait to be asked.
 
-### Reconstituting the Rat Pack from scratch
+**Models: launch with `--model`, never `/model`.** `/model` saves its pick as
+the default in `~/.claude/settings.json`, which plain and MindRouter sessions
+share, so a MindRouter pick breaks plain `claude` and vice versa. `--model`
+only applies to that launch. `--model default` = Anthropic's current
+recommended model.
+Use full MindRouter model names (`qwen/qwen3.5-122b`), not its aliases
+(`default-agent`, `default-llm-large`, …), which are easy to confuse with
+Claude Code's own `default`.
+
+### Reconstituting the crew from scratch
 
 If Herdr was closed (not detached), the crew panes are gone. Names don't
-survive either: Herdr clears a name when its agent exits. dean rebuilds them:
+survive either: Herdr clears a name when its agent exits. Monet rebuilds them:
 
-1. Check `test "$HERDR_ENV" = 1` (dean must itself be in a Herdr pane) and
+1. Check `test "$HERDR_ENV" = 1` (Monet must itself be in a Herdr pane) and
    `herdr agent list`. Skip anyone still alive under their name.
-2. Layout: a 2x2 grid in dean's tab (splits only go right or down). Split
-   dean's pane right for jerry, split dean's pane down for sammy, split jerry's
-   pane down for peter. Use
-   `herdr pane split --pane <id> --direction <dir> --cwd ~/exp/fizz --no-focus`
-   and read each new pane ID from `.result.pane.pane_id` (IDs change every time).
-3. Start each one, always passing `--model` (any `/model` switch rewrites the
-   saved default for new sessions):
+2. Layout: three tabs, two panes side by side in each (more per tab gets too
+   crowded on a screen share):
+   `crew-1` = monet | m-automate, `crew-2` = m-testeur | m-coureur,
+   `crew-3` = m-critique | docteur-m.
+   `herdr tab create --workspace <ws> --label crew-2 --cwd ~/exp/fizz --no-focus`
+   gives the left pane as `.result.root_pane.pane_id`; split it right with
+   `herdr pane split --pane <id> --direction right --cwd ~/exp/fizz --no-focus`
+   and read the new pane ID from `.result.pane.pane_id` (IDs change every time).
+   Name Monet's own tab with `herdr tab rename <tab id> crew-1`.
+3. Start each one with its `--model` from the table:
    `herdr agent start <name> --kind claude --pane <id> --timeout 60000 --
    --settings /Users/mikel/exp/fizz/.claude/settings.mindrouter.json --model <model>`
 4. Have each say hi in one line so the user can see which window is whose.
-5. dean itself is started by the user: plain `claude` (no `--settings`) in a
-   Herdr pane, then `herdr agent rename <its pane id> dean`.
+5. Monet itself is started by the user: `claude --model default` (no
+   `--settings`) in a Herdr pane, then `herdr agent rename <its pane id> monet`.
 
 Quirks seen so far:
 - A prompt sometimes lands in the input box without submitting. A few seconds
