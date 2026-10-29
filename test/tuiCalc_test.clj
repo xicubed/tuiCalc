@@ -414,6 +414,59 @@
   (t/is (= "reduce" (tc/flash-for-action (typed fresh "reduce") "enter"))))
 
 ;; ---------------------------------------------------------------
+;; linreg — linear regression over the whole stack (HP-15c L.R.)
+;; ---------------------------------------------------------------
+(defn- approx= [a b]
+  (< (Math/abs (- a b)) 1e-9))
+
+(t/deftest linreg-basic
+  ;; points (0,1) (1,3) (2,5) -> y = 2x + 1
+  (t/is (approx= 2.0 (first (submit->stack "linreg" [0 1 1 3 2 5]))))
+  (t/is (approx= 1.0 (second (submit->stack "linreg" [0 1 1 3 2 5]))))
+  ;; [1 2 2 4] -> y = 2x + 0
+  (t/is (approx= 2.0 (first (submit->stack "linreg" [1 2 2 4]))))
+  (t/is (approx= 0.0 (second (submit->stack "linreg" [1 2 2 4]))))
+  ;; [1 1 2 2 3 2] -> y = 0.5x + 0.666...
+  (t/is (approx= 0.5 (first (submit->stack "linreg" [1 1 2 2 3 2]))))
+  (t/is (approx= 0.6666666666666666 (second (submit->stack "linreg" [1 1 2 2 3 2])))))
+
+(t/deftest linreg-alias-lr
+  (t/is (= (submit->stack "linreg" [1 2 2 4])
+           (submit->stack "lr" [1 2 2 4]))))
+
+(t/deftest linreg-info-message
+  (t/is (= "y = 2x + 1  (3 points)"
+           (:info (submit->state "linreg" [0 1 1 3 2 5])))))
+
+(t/deftest linreg-error-odd-count
+  (t/is (= [1 2 3] (:stack (submit->state "linreg" [1 2 3]))))
+  (t/is (= "Need x y pairs" (:status (submit->state "linreg" [1 2 3])))))
+
+(t/deftest linreg-error-not-enough-points
+  (t/is (= [1 2] (:stack (submit->state "linreg" [1 2]))))
+  (t/is (= "Need two points" (:status (submit->state "linreg" [1 2]))))
+  (t/is (= [] (:stack (submit->state "linreg" []))))
+  (t/is (= "Need two points" (:status (submit->state "linreg" [])))))
+
+(t/deftest linreg-error-vertical-line
+  (t/is (= [2 1 2 5] (:stack (submit->state "linreg" [2 1 2 5]))))
+  (t/is (= "Vertical line" (:status (submit->state "linreg" [2 1 2 5])))))
+
+(t/deftest linreg-button-for-token
+  (t/is (= "linreg" (tc/button-for-token "linreg")))
+  (t/is (= "linreg" (tc/button-for-token "lr"))))
+
+(t/deftest linreg-run-action
+  (let [state (assoc (first (tc/init)) :stack [0 1 1 3 2 5])
+        ret (tc/run-action state "linreg")
+        [result-state cmd] ret]
+    (t/is (vector? ret))
+    (t/is (= 2 (count ret)))
+    (t/is (nil? cmd))
+    (t/is (approx= 2.0 (first (:stack result-state))))
+    (t/is (approx= 1.0 (second (:stack result-state))))))
+
+;; ---------------------------------------------------------------
 ;; Regression tests for map/reduce bugs (fix-map-reduce.md)
 ;; ---------------------------------------------------------------
 ;; Bug 1: Typed operator keys fire instantly when input is not blank/number

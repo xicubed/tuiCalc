@@ -238,6 +238,31 @@
       (str (long n))
       (str n))))
 
+;; Linear regression over the whole stack (HP-15c L.R.).
+;; Stack holds points as flattened pairs: x1 y1 x2 y2 ... (push order).
+;; Returns [m b] with intercept b in X (last), slope m in Y.
+(defn linreg [state]
+  (let [stack (:stack state)
+        n (count stack)
+        points (partition 2 stack)
+        point-count (count points)
+        ;; map each point to [1 x y xy x²], reduce with + to get n Σx Σy Σxy Σx²
+        sums (->> points
+                  (map (fn [[x y]] [1.0 x y (* x y) (* x x)]))
+                  (reduce #(mapv + %1 %2) [0.0 0.0 0.0 0.0 0.0]))
+        [n-sum sx sy sxy sx2] sums
+        denom (- (* n-sum sx2) (* sx sx))]
+    (cond
+      (odd? n) (assoc state :status "Need x y pairs")
+      (< point-count 2) (assoc state :status "Need two points")
+      (zero? denom) (assoc state :status "Vertical line")
+      :else (let [m (/ (- (* n-sum sxy) (* sx sy)) denom)
+                  b (/ (- sy (* m sx)) n-sum)
+                  info-str (str "y = " (format-num-for-info m) "x + "
+                                (format-num-for-info b)
+                                "  (" point-count " points)")]
+              (assoc state :stack [m b] :info info-str)))))
+
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
   (assoc state
@@ -428,6 +453,10 @@
       (= token "reverse")
       [(reverse-stack state) nil]
 
+      ;; Linear regression (HP-15c L.R.).
+      (#{"linreg" "lr"} token)
+      [(linreg state) nil]
+
       ;; Get the value at level <i> (dup/roll). No level yet: start a
       ;; two-step prompt -- the input box itself becomes "get? " and
       ;; you type the level (0=X, 1=Y, -1=T), then Enter. Any other
@@ -486,7 +515,7 @@
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
     ["reverse" "[reverse]"] ["get" "[GET]"]]
-   [["map" "[map]"] ["reduce" "[reduce]"] ["q" "[q]"]]])
+   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["q" "[q]"]]])
 
 ;; Faint legend under the buttons.
 (def hint-line
@@ -578,6 +607,7 @@
                                         "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
     "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
                                         "[start] op: +, *, /, 10 + (sum+10)") nil]
+    "linreg"  [(linreg state) nil]
     "q"       [state program/quit-cmd]
     "enter"   (submit state)
     [(execute-op state action) nil]))
@@ -614,6 +644,7 @@
     "get" "get" "nth" "get" "remove" "get"
     "map" "map"
     "reduce" "reduce"
+    "linreg" "linreg" "lr" "linreg"
     "pow" "^"
     (when (and (string? token) (contains? ops token))
       ;; "x" is an ops alias for the "*" button.
