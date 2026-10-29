@@ -30,6 +30,15 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 - **Whole-stack ops are real map/reduce.** `linreg` treats the stack as
   points `x1 y1 x2 y2 ...`, maps each to `[1 x y xy x²]`, reduces with `+`
   (the HP's Σ registers), and leaves slope in Y, intercept in X.
+- **A successful `lr` opens a plot in the browser** — an old-style blueline
+  drawing (blue ink on off-white graph paper, title block). The look was
+  iterated with the user on 2026-10-29 and is deliberate: both axes always
+  include 0,0, one shared scale so slopes compare at a glance (slope 1 =
+  45°), square cells, square plot box. Extreme slopes give a thin sliver;
+  accepted for now (a fallback to independent scales is the known fix).
+  Side effects go in the `cmd` half of `[state cmd]` (charm runs it, tests
+  never do); numbers display at 6 significant digits (`sig6`) while the
+  stack keeps full precision.
 - **Bare ENTER (empty input) dups the top of the stack** (the HP ENTER key);
   no-op on an empty stack. ENTER with a typed command runs that command.
 - A **rainbow button flash** on activation so someone on a screen share can see
@@ -161,6 +170,15 @@ Quirks seen so far:
 - Spec the test for every entry point: `submit` tests missed a broken
   `run-action` entry (button clicks), so specs now ask for a `tc/run-action`
   test whenever a button is added.
+- **Look at visual output; tests can't see it.** For the plot, render
+  sample HTML with headless Chrome (`--headless=new --screenshot=out.png
+  --window-size=1000,1040`, plus `--virtual-time-budget=3000` so the web
+  font loads) and read the PNG. Every plot round this way caught bugs the
+  passing tests missed (y drawn downward, off-page axis title, empty minor
+  grid, float-noise labels, overflowing title block).
+- Users may talk to a crew pane directly. Panes can't reach Monet (their
+  `SendMessage` only sees their own subagents), so the user relays, or
+  Monet reads the pane with `herdr agent read`.
 - Round order that worked (linreg, 2026-10-29): spec -> M. Automate + M.
   Testeur in parallel -> M. Coureur runs `bb test` -> M. Critique reviews ->
   one small cleanup round -> Monet reviews the diff -> commit.

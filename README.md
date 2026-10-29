@@ -58,7 +58,7 @@ oldest values fall off the top once the stack exceeds it.
 | Swap X and Y | click `[x<>y]`, or `swap` / `x<>y` + Enter | X (newest) and Y trade places |
 | Map over stack | `map` + Enter, then op + Enter (or `map + 4`) | op applied to every value (`map + 4`, `map * 2`, `map chs`; a bare `map +` uses X as the operand) |
 | Reduce stack | `reduce` + Enter, then op + Enter (or `reduce +`) | stack folds to one value (`reduce +`, `reduce *`) |
-| Linear regression | push points as `x1 y1 x2 y2 ...`, then `lr` + Enter or `[L.R.]` | stack becomes slope (Y) and intercept (X); info shows e.g. `y = 2x + 1  (3 points)` — errors `Need x y pairs`, `Need two points`, `Vertical line` |
+| Linear regression | push points as `x1 y1 x2 y2 ...`, then `lr` + Enter or `[L.R.]` | stack becomes slope (Y) and intercept (X) at full precision; info shows e.g. `y = 2x + 1  (3 points)` (numbers displayed at 6 significant digits) — errors `Need x y pairs`, `Need two points`, `Vertical line` |
 | Clear | `clear` + Enter, or `^l` | empty stack |
 | Quit | `q` + Enter | exit |
 
@@ -68,6 +68,13 @@ Notes:
   key. Enter *with text typed* runs that command instead.
 - **Mouse:** every button in the help rows is clickable; clicking any button
   flashes it so a screen-share viewer sees what ran.
+- **Plot:** on successful `lr`, the app writes a self-contained HTML/SVG
+  page to `tuiCalc-plot.html` in the system temp dir and **opens it in the
+  browser** (`open` on macOS, `xdg-open` on Linux). Old-style blueline
+  drawing: blue ink on off-white, a square equal-scale plot box (both axes
+  share one grid step, so slope 1 is 45 degrees) always including the
+  origin, dots with "x, y" hover labels, and a title block with equation,
+  point count, and date.
 - **Two-step prompts:** typing just `get` or `remove` turns the input line
   into `get? `/`remove? ` — the next integer you type is the level. Pressing
   Escape or clicking another button cancels.
@@ -89,7 +96,7 @@ after a change run the TUI and smoke-test it:
 4. `^s` (CHS) → top flips to `-9.0`; the `[CHS]` button flashes
 5. `get` Enter, `0` Enter → copies top again; `remove` Enter, `0` Enter removes it
 6. `^t` (peek) / `^n` (count) → info line, stack untouched
-7. `0` `1` `1` `3` `2` `5` (Enter after each), `lr` → stack `2.0` over `1.0` (slope over intercept), info `y = 2x + 1  (3 points)`
+7. `0` `1` `1` `3` `2` `5` (Enter after each), `lr` → stack `2.0` over `1.0` (slope over intercept), info `y = 2x + 1  (3 points)`, and a blueline plot opens in the browser (3 dots on a line rising 2 squares per square, from the origin corner)
 8. `q` Enter → quit
 
 Watch for: new values appearing on the **bottom row** (the stack-top / X),

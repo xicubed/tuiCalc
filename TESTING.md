@@ -42,6 +42,16 @@ already there:
 - `tc/<fn>` — call any public `tuiCalc` function directly.
 - Test button actions through `tc/run-action`, which must return
   `[state cmd]` — submit-only tests let a button-path bug slip past.
+- The `lr` plot is pure string generation plus a charm cmd (`plot-cmd`
+  writes the temp file and opens the browser). Unit tests check
+  `plot-geometry` (equal scale, origin included) and `plot-html` strings,
+  and only assert that `lr` returns a cmd (`(= :cmd (:type cmd))`) — never
+  call its `:fn`, it opens a browser.
+- The plot's *look* can't be unit-tested. Render a sample and view it:
+  require `tuiCalc` in a scratch script, `spit` the output of
+  `(tc/plot-html points m b "2026-10-29")` to a file, then
+  `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars --window-size=1000,1040 --virtual-time-budget=3000 --screenshot=out.png file:///abs/path/plot.html`
+  and look at `out.png`.
 
 Then run `bb test` and confirm the count went up and it's still green.
 
@@ -130,7 +140,7 @@ point of the screen-share animation):
 | Reverse | `^r` or `reverse` Enter | stack order flips |
 | Get level | `get` Enter → type level → Enter (or `get 0`) | copies that level; `[GET]` flashes |
 | Remove level | `remove` Enter → level → Enter | removes that level |
-| Linreg | `0` `1` `1` `3` `2` `5` (Enter after each), then `[L.R.]` / `linreg` Enter / `lr` Enter | slope `2.0` in Y over intercept `1.0` in X; info `y = 2x + 1  (3 points)` |
+| Linreg | `0` `1` `1` `3` `2` `5` (Enter after each), then `[L.R.]` / `linreg` Enter / `lr` Enter | slope `2.0` in Y over intercept `1.0` in X; info `y = 2x + 1  (3 points)`; blueline plot opens in the browser (3 dots on the fit line, square grid with the origin in the bottom-left corner; hover a dot shows `x, y`) |
 | Quit | `q` Enter | exits |
 
 **Mouse:** click any button in the two help rows (`[+]` … `[q]`). Clicking a
