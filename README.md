@@ -55,6 +55,10 @@ oldest values fall off the top once the stack exceeds it.
 | Reverse | `^r`, or `reverse` + Enter | stack order flips |
 | Copy from a level | `get` + Enter, type a level, Enter (or `get 0`) | copies that level to X (`0`=X, `1`=Y, `-1`=T) |
 | Remove a level | `remove` + Enter, level, Enter | removes that level |
+| Swap X and Y | click `[x<>y]`, or `swap` / `x<>y` + Enter | X (newest) and Y trade places |
+| Map over stack | `map` + Enter, then op + Enter (or `map + 4`) | op applied to every value (`map + 4`, `map * 2`, `map chs`; a bare `map +` uses X as the operand) |
+| Reduce stack | `reduce` + Enter, then op + Enter (or `reduce +`) | stack folds to one value (`reduce +`, `reduce *`) |
+| Linear regression | push points as `x1 y1 x2 y2 ...`, then `lr` + Enter or `[L.R.]` | stack becomes slope (Y) and intercept (X); info shows e.g. `y = 2x + 1  (3 points)` — errors `Need x y pairs`, `Need two points`, `Vertical line` |
 | Clear | `clear` + Enter, or `^l` | empty stack |
 | Quit | `q` + Enter | exit |
 
@@ -85,7 +89,8 @@ after a change run the TUI and smoke-test it:
 4. `^s` (CHS) → top flips to `-9.0`; the `[CHS]` button flashes
 5. `get` Enter, `0` Enter → copies top again; `remove` Enter, `0` Enter removes it
 6. `^t` (peek) / `^n` (count) → info line, stack untouched
-7. `q` Enter → quit
+7. `0` `1` `1` `3` `2` `5` (Enter after each), `lr` → stack `2.0` over `1.0` (slope over intercept), info `y = 2x + 1  (3 points)`
+8. `q` Enter → quit
 
 Watch for: new values appearing on the **bottom row** (the stack-top / X),
 the right button flashing on every action, and the help rows not shifting

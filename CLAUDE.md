@@ -25,7 +25,11 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   vector index. (These are *not* real HP-15c levels — the machine has no
   numbered levels; ours are offset-from-X. Don't call them "HP levels".)
 - Commands carry **real Clojure names**: `pop`/`drop`, `peek`, `count`,
-  `reverse`, `get`/`nth`, `remove`, `chs`.
+  `reverse`, `get`/`nth`, `remove`, `chs`, `map`, `reduce`. Where Clojure
+  has no name, use the HP-15c one: `swap` (x<>y), `linreg`/`lr` (L.R.).
+- **Whole-stack ops are real map/reduce.** `linreg` treats the stack as
+  points `x1 y1 x2 y2 ...`, maps each to `[1 x y xy x²]`, reduces with `+`
+  (the HP's Σ registers), and leaves slope in Y, intercept in X.
 - **Bare ENTER (empty input) dups the top of the stack** (the HP ENTER key);
   no-op on an empty stack. ENTER with a typed command runs that command.
 - A **rainbow button flash** on activation so someone on a screen share can see
@@ -41,10 +45,29 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   table and the babashka gotchas; read it before changing `src/tuiCalc.clj`.
 - New machines: install babashka (`bb`), then `git clone`. The charm dep is
   pinned in `bb.edn` by git-sha and fetched automatically on first run.
+- **Paren repair hook** (installed 2026-10-29; lives in `~/.claude`, so it does
+  NOT come with a clone — redo it on a new machine). LLMs mismatch Clojure
+  delimiters and then count parens by hand ("paren edit death loop");
+  [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light)'s hook
+  fixes them on every Write/Edit before they hit disk, zero tokens:
+  1. `brew install babashka/brew/bbin`
+  2. `bbin install https://github.com/bhauman/clojure-mcp-light.git --tag v0.2.2`
+     (puts `clj-paren-repair-claude-hook` in `~/.local/bin`)
+  3. In `~/.claude/settings.json` (user settings, so MindRouter `--settings`
+     sessions get it too) add `/Users/mikel/.local/bin/clj-paren-repair-claude-hook`
+     as a command hook on PreToolUse and PostToolUse (matcher `Write|Edit`)
+     and on SessionEnd. **No `--cljfmt`** — that reformats whole files and
+     puts unrelated lines in every diff. Merge with the existing herdr hooks.
+  4. Test: write a `.clj` file missing a `)` — it lands on disk closed.
+     Restart panes started before the change.
+  Side effect: the hook auto-approves Clojure Write/Edit permission prompts.
 
 ## Open work
 
 - **TODO-tuiCalc.md** lists known bugs from code review.
+- Bug: the `map?`/`reduce?` placeholders say `4 +` / `10 +`, but the parser
+  wants the op first (`map + 4`); typing `4 +` gives `Unknown: 4`. Fix the
+  placeholder strings (or accept both orders). Good small crew round.
 - More Clojure vector/stack ops are wanted (min/max, abs, …). Next idea: add
   `max min mod quot` to the `ops` table; they then work as binary keys AND in
   `map`/`reduce` for free (`reduce max`, `map max 0` clamps negatives).
@@ -130,7 +153,17 @@ Quirks seen so far:
 - Unbalanced parens: don't count by hand. Locate them with
   `bb -e "(require '[edamame.core :as e]) (e/parse-string-all (slurp \"src/tuiCalc.clj\") {:all true}) (println :ok)"`
   (parses only, doesn't load; needs `{:all true}` for the regex literals).
-  clj-kondo / clojure-mcp-light paren-repair hook are candidates to install.
+  The paren-repair hook (see Run & test) should prevent most of these; if a
+  pane still hand-counts parens, check the hook is installed and restart it.
+- Verify, don't trust, a crew reply: M. Testeur once replied with a list of
+  tests he hadn't written. Ask for `git diff --stat <file>` in the reply, and
+  check the diff before passing work on.
+- Spec the test for every entry point: `submit` tests missed a broken
+  `run-action` entry (button clicks), so specs now ask for a `tc/run-action`
+  test whenever a button is added.
+- Round order that worked (linreg, 2026-10-29): spec -> M. Automate + M.
+  Testeur in parallel -> M. Coureur runs `bb test` -> M. Critique reviews ->
+  one small cleanup round -> Monet reviews the diff -> commit.
 - Keep crew rounds small: qwen does well on one well-specified change and
   bogs down on tangled multi-bug rounds (the map/reduce fix round took ~55 min).
 - `herdr agent read` can't scroll far while an agent is working (alternate

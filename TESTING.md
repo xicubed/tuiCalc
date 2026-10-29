@@ -40,6 +40,8 @@ already there:
 - `submit->state "txt" [seed...]` — same, but returns the whole state so you
   can assert `:status` / `:info` / `:pending`.
 - `tc/<fn>` — call any public `tuiCalc` function directly.
+- Test button actions through `tc/run-action`, which must return
+  `[state cmd]` — submit-only tests let a button-path bug slip past.
 
 Then run `bb test` and confirm the count went up and it's still green.
 
@@ -128,6 +130,7 @@ point of the screen-share animation):
 | Reverse | `^r` or `reverse` Enter | stack order flips |
 | Get level | `get` Enter → type level → Enter (or `get 0`) | copies that level; `[GET]` flashes |
 | Remove level | `remove` Enter → level → Enter | removes that level |
+| Linreg | `0` `1` `1` `3` `2` `5` (Enter after each), then `[L.R.]` / `linreg` Enter / `lr` Enter | slope `2.0` in Y over intercept `1.0` in X; info `y = 2x + 1  (3 points)` |
 | Quit | `q` Enter | exits |
 
 **Mouse:** click any button in the two help rows (`[+]` … `[q]`). Clicking a
