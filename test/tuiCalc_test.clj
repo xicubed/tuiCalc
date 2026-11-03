@@ -982,6 +982,13 @@
 (t/deftest init-has-undo
   (t/is (= [] (:undo (first (tc/init))))))
 
+(t/deftest wolfram-plot-html-utf8-and-console-caption
+  ;; The title has an em dash: without a charset it shows as "â€”".
+  (let [html (tc/wolfram-plot-html "/tmp/x.svg" "Total[{1, 2}] = 3")]
+    (t/is (clojure.string/includes? html "<meta charset=\"utf-8\">"))
+    (t/is (clojure.string/includes? html "ui-monospace"))
+    (t/is (clojure.string/includes? html "Total[{1, 2}] = 3"))))
+
 ;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------

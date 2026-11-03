@@ -22,6 +22,28 @@
 (* One reply = one line: never wrap long output. *)
 SetOptions[$Output, PageWidth -> Infinity];
 
+(* Blueline look for every plot, like the lr plot: blue ink on off-white
+   graph paper. Set once here; inline options fail for HoldAll functions
+   like Plot. The font name is resolved by the browser page that shows
+   the SVG (it loads Architects Daughter), so the SVG is inlined there. *)
+$tcPaper = RGBColor["#f4f1e6"]; $tcInk = RGBColor["#1f4e9a"];
+$tcGrid = RGBColor["#7fa6d6"];
+$tcPlotOptions = {
+  Background -> $tcPaper, ImageSize -> 720, AspectRatio -> 1/GoldenRatio,
+  Frame -> True, Axes -> False,
+  FrameStyle -> Directive[$tcInk, AbsoluteThickness[1.5]],
+  FrameTicksStyle -> Directive[$tcInk, 13],
+  GridLines -> Automatic,
+  BaseStyle -> {FontFamily -> "Architects Daughter", FontColor -> $tcInk, 14},
+  LabelStyle -> {FontFamily -> "Architects Daughter", FontColor -> $tcInk, 14},
+  PlotRangePadding -> Scaled[0.05], ImagePadding -> {{60, 20}, {45, 15}}};
+Scan[SetOptions[#, Sequence @@ $tcPlotOptions, PlotStyle -> $tcInk] &,
+  {ListPlot, ListLinePlot, Plot, ParametricPlot, DateListPlot}];
+SetOptions[ListPlot, PlotMarkers -> {Graphics[{$tcInk, EdgeForm[{$tcPaper, AbsoluteThickness[2]}], Disk[]}], 0.035}];
+Scan[SetOptions[#, Sequence @@ $tcPlotOptions,
+    ChartStyle -> Directive[Opacity[0.35], $tcInk, EdgeForm[{$tcInk, AbsoluteThickness[1.5]}]]] &,
+  {Histogram, BarChart}];
+
 $tcOverrides = <|
   "Power" -> 2, "BinomialCoefficient" -> 2, "D" -> 2,
   "Max" -> All, "Min" -> All|>;
@@ -62,6 +84,14 @@ tcShow[e_] := ToString[e, InputForm]
 
 tcGraphicsQ[g_] := MatchQ[g, _Graphics | _Graphics3D | _Legended]
 
+(* SVG export draws grid lines 40% gray whatever GridLinesStyle says, so
+   recolor them to the blueline grid blue (#7fa6d6) afterwards. *)
+tcExportSVG[path_String, g_] := (
+  Export[path, g, "SVG"];
+  Export[path, StringReplace[Import[path, "Text"],
+    "stroke:rgb(50%,50%,50%);stroke-opacity:0.4" ->
+      "stroke:rgb(49.8%,65.1%,83.9%);stroke-opacity:0.8"], "Text"])
+
 tcCall[name_String, stack_List] := Catch[Module[
   {k, f, args, res, n = Length[stack], shown},
   If[! tcKnownQ[name], Throw[{"ERR", "Unknown: " <> name}]];
@@ -84,7 +114,7 @@ tcCall[name_String, stack_List] := Catch[Module[
       {"ERR", shown <> " failed"},
     tcGraphicsQ[res],
       With[{path = FileNameJoin[{$TemporaryDirectory, "tuiCalc-wolfram.svg"}]},
-        Export[path, res, "SVG"];
+        tcExportSVG[path, res];
         {"OK", 0, "GFX", path, shown}],
     tcRealQ[res],
       {"OK", k, "NUM", tcNum[res], shown <> " = " <> tcShow[res]},

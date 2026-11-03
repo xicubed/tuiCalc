@@ -579,10 +579,10 @@
 ;; HTML page for GFX (SVG) display
 (defn wolfram-plot-html [path info]
   (str "<!doctype html>\n"
-       "<html>\n<head><title>tuiCalc — " info "</title></head>\n"
+       "<html>\n<head><meta charset=\"utf-8\"><title>tuiCalc — " info "</title></head>\n"
        "<body style=\"background:#f4f1e6;margin:0;padding:20px;text-align:center;\">\n"
        "<img src=\"file://" path "\" style=\"max-width:100%;max-height:80vh;\">\n"
-       "<p style=\"font-family:sans-serif;color:#1f4e9a;\">" info "</p>\n"
+       "<p style=\"font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:15px;color:#1f4e9a;\">" info "</p>\n"
        "</body>\n</html>"))
 
 ;; Wolfram operation: [state cmd]

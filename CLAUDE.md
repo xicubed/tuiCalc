@@ -95,6 +95,13 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   unchanged. Keep Wolfram's own chart look but in the blueline palette
   (paper #f4f1e6, ink #1f4e9a, grid #7fa6d6), set once via SetOptions when
   the kernel starts; the hand-built lr plot stays as is.
+  **Built 2026-11-03** (`src/tuiCalc.wl`). Two gotchas: the SVG has text as
+  glyph outlines, so the *kernel* needs the Architects Daughter font
+  installed (`~/Library/Fonts/ArchitectsDaughter-Regular.ttf`, from
+  github.com/google/fonts `ofl/architectsdaughter`; redo on a new
+  machine, else plots fall back to a plain sans); and SVG export draws grid
+  lines 40% gray whatever `GridLinesStyle` says, so `tcExportSVG` recolors
+  them in the file.
 - **Phase 2 (the big one): symbolic stack values**, Wolfram doing the math
   (agreed direction 2026-11-03; build after the numeric bridge above).
   Stack items may be Wolfram expressions (kept as their InputForm text;
@@ -105,7 +112,11 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   with an `N` button for decimals. Same arity rules: [x^3 'x] D -> 3x^2;
   Expand/Factor/Simplify/Integrate/Solve; [x^2 'x] Plot -> parabola.
   Build expressions RPN-style, not typed infix: `'x 1 + 2 y^x` -> (x+1)^2
-  (ops on a symbol stay symbolic). **`fn`** (user's pick: Clojure name, can't
+  (ops on a symbol stay symbolic). **3D results** (`Plot3D`,
+  `PolyhedronData["RhombicHexecontahedron"]`) should get the blueline 3D
+  look of `docs/spikey/` by default: faces hand-shaded ink -> grid blue ->
+  paper by angle to a light, ambient-only Lighting, ink edges, transparent
+  background (the user's favourite render, 2026-11-03). **`fn`** (user's pick: Clojure name, can't
   clash with Capitalized Wolfram) turns the X expression into a function of
   its free variable, `x ↦ (x+1)^2` (= Wolfram Function[x, ...]) kept on the
   stack: apply it to a number, `map` it over the stack, Plot/D/Integrate it.
