@@ -122,6 +122,21 @@
             stack (pop (pop stack))]
         (assoc state :stack (conj (conj stack x) y))))))
 
+;; Maximum undo history size.
+(def undo-limit 100)
+
+;; Undo: restore the previous stack.
+(defn undo [state]
+  (if (empty? (:undo state))
+    (assoc state :status "Nothing to undo")
+    (let [undo-stack (:undo state)
+          prev-stack (peek undo-stack)
+          new-undo (pop undo-stack)]
+      (assoc state
+             :stack prev-stack
+             :undo new-undo
+             :info "undo"))))
+
 ;; -------------------------------------------------------------
 ;; Stack manipulation. The stack is a plain Clojure vector held in
 ;; push order: the oldest value is first, the newest (the stack-top,
@@ -761,6 +776,10 @@
       (= token "clear")
       [(assoc state :stack []) nil]
 
+      ;; Undo.
+      (= token "undo")
+      [(undo state) nil]
+
       ;; Change sign of the top value.
       (= token "chs")
       [(chs state) nil]
@@ -853,12 +872,12 @@
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
     ["reverse" "[reverse]"] ["get" "[GET]"]]
-   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["q" "[q]"]]
+   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["undo" "[undo]"] ["q" "[q]"]]
    wolfram-row])
 
 ;; Faint legend under the buttons.
 (def hint-line
-  "^x drop ^s chs ^v inv ^t peek ^n count ^r rev ^l clear ^p pi ^g get ^ pow")
+  "^x drop ^s chs ^v inv ^t peek ^n count ^r rev ^l clear ^p pi ^g get ^ pow ^z undo")
 
 (defn help-lines []
   (map #(str/join "  " (map second %)) help-rows))
@@ -949,6 +968,7 @@
       "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
                                           "[start] op: +, *, /, 10 + (sum+10)") nil]
       "linreg"  (linreg-action state)
+      "undo"    [(undo state) nil]
       "q"       [state program/quit-cmd]
       "enter"   (submit state)
       [(execute-op state action) nil])))
@@ -965,7 +985,8 @@
    "r" "reverse"
    "l" "clear"
    "p" "pi"
-   "g" "get"})
+   "g" "get"
+   "z" "undo"})
 
 ;; Which button a typed command corresponds to (so pressing Enter
 ;; flashes the button that actually ran, not just [ENTER]). Nil for
@@ -986,6 +1007,7 @@
     "map" "map"
     "reduce" "reduce"
     "linreg" "linreg" "lr" "linreg"
+    "undo" "undo"
     ;; Wolfram buttons (lowercased token -> button name)
     "sqrt" "Sqrt"
     "mod" "Mod"
@@ -1054,6 +1076,7 @@
     :status  nil
     :info    nil
     :pending nil
+    :undo    []
     :wolfram @wolfram-fn}
    nil])
 
@@ -1062,7 +1085,18 @@
 ;; Charm update
 ;; ------------------------------------------------------------
 
-(defn update-fn [state message]
+;; Track undo history: record old stack if stack changed and undo wasn't touched.
+(defn track-undo [old new]
+  (if (and (not= (:stack old) (:stack new))
+           (= (:undo old) (:undo new)))
+    (let [old-stack (:stack old)
+          undo-list (or (:undo new) [])
+          new-undo (vec (take-last undo-limit (conj undo-list old-stack)))]
+      (assoc new :undo new-undo))
+    new))
+
+;; Handle messages (renamed from update-fn).
+(defn handle-message [state message]
   (let [key (:key message)]
 
     (cond
@@ -1159,6 +1193,11 @@
                 :input input
                 :status nil)
          cmd]))))
+
+;; Every message goes through here so any stack change is undoable.
+(defn update-fn [state message]
+  (let [[new-state cmd] (handle-message state message)]
+    [(track-undo state new-state) cmd]))
 
 ;; ------------------------------------------------------------
 ;; View

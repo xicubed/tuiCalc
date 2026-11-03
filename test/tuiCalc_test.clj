@@ -892,6 +892,97 @@
   (t/is (= [1 2 3] (:stack (submit->state "reduce" [1 2 3])))))
 
 ;; ---------------------------------------------------------------
+;; Undo (spec-undo.md): every stack change saves the old stack in
+;; :undo, recorded once in the update-fn wrapper (track-undo).
+;; ---------------------------------------------------------------
+(defn ctrl-key [k]
+  {:type :key-press :key k :alt false :ctrl true :shift false})
+
+(defn wolfram-stub [reply]
+  (fn [_line]
+    reply))
+
+;; One typed command + Enter, recorded the way update-fn records it.
+(defn submit+track [state txt]
+  (let [s (typed state txt)]
+    (tc/track-undo s (first (tc/submit s)))))
+
+(t/deftest undo-basic
+  (let [s (tc/undo (assoc fresh :stack [3.0] :undo [[1.0 2.0]]))]
+    (t/is (= [1.0 2.0] (:stack s)))
+    (t/is (= [] (:undo s)))
+    (t/is (= "undo" (:info s)))))
+
+(t/deftest undo-nothing-to-undo
+  (let [s (tc/undo (assoc fresh :stack [1.0] :undo []))]
+    (t/is (= [1.0] (:stack s)))
+    (t/is (= "Nothing to undo" (:status s)))))
+
+(t/deftest track-undo-records-changes
+  (let [old (assoc fresh :stack [1.0 2.0] :undo [[5.0]])]
+    ;; stack changed, history untouched -> old stack appended
+    (t/is (= [[5.0] [1.0 2.0]]
+             (:undo (tc/track-undo old (assoc old :stack [3.0])))))
+    ;; stack unchanged -> nothing recorded
+    (t/is (= [[5.0]]
+             (:undo (tc/track-undo old (assoc old :info "x")))))
+    ;; the action itself touched history (an undo) -> nothing recorded
+    (t/is (= []
+             (:undo (tc/track-undo old (assoc old :stack [3.0] :undo [])))))))
+
+(t/deftest track-undo-limit
+  (let [old (assoc fresh :stack [100.0] :undo (mapv vector (range 100)))
+        s   (tc/track-undo old (assoc old :stack [101.0]))]
+    (t/is (= 100 (count (:undo s))))
+    (t/is (= [1] (first (:undo s))))      ; oldest ([0]) dropped
+    (t/is (= [100.0] (peek (:undo s))))))
+
+(t/deftest undo-user-story-total-undo-mean
+  (let [s1 (submit+track (assoc fresh
+                                :stack [1.0 2.0 3.0 4.0]
+                                :wolfram (wolfram-stub "TC\tOK\t4\tNUM\t10.\tTotal[{1, 2, 3, 4}] = 10"))
+                         "Total")
+        [s2 _] (tc/update-fn s1 (ctrl-key "z"))
+        s3 (submit+track (assoc s2 :wolfram (wolfram-stub "TC\tOK\t4\tNUM\t2.5\tMean[{1, 2, 3, 4}] = 2.5"))
+                         "Mean")]
+    (t/is (= [10.0] (:stack s1)))
+    (t/is (= [1.0 2.0 3.0 4.0] (:stack s2)))
+    (t/is (= [] (:undo s2)))
+    (t/is (= [2.5] (:stack s3)))))
+
+(t/deftest undo-two-steps
+  (let [s1 (submit+track fresh "5")
+        s2 (submit+track s1 "chs")
+        [s3 _] (tc/update-fn s2 (ctrl-key "z"))
+        [s4 _] (tc/update-fn s3 (ctrl-key "z"))]
+    (t/is (= [5.0] (:stack s1)))
+    (t/is (= [-5.0] (:stack s2)))
+    (t/is (= [5.0] (:stack s3)))
+    (t/is (= [] (:stack s4)))))
+
+(t/deftest update-fn-records-undo
+  ;; ctrl+s = CHS through the real update-fn wrapper
+  (let [[s _] (tc/update-fn (assoc fresh :stack [2.0]) (ctrl-key "s"))]
+    (t/is (= [-2.0] (:stack s)))
+    (t/is (= [[2.0]] (:undo s)))))
+
+(t/deftest undo-entry-points
+  (let [s (assoc fresh :stack [3.0] :undo [[1.0 2.0]])]
+    (t/is (= [1.0 2.0] (:stack (first (tc/run-action s "undo")))))
+    (t/is (= [1.0 2.0] (:stack (first (tc/submit (typed s "undo")))))))
+  (t/is (= "undo" (tc/button-for-token "undo")))
+  (let [line  (nth (tc/help-lines) 2)
+        start (.indexOf line "[undo]")
+        y     (+ tc/help-row0 3)]
+    (t/is (<= 0 start))
+    (t/is (= "undo" (tc/find-button-at (inc start) y)))
+    (t/is (= "undo" (tc/find-button-at (+ start 6) y)))
+    (t/is (not= "undo" (tc/find-button-at (+ start 7) y)))))
+
+(t/deftest init-has-undo
+  (t/is (= [] (:undo (first (tc/init))))))
+
+;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------
 ;; bb's stripped clojure.test has no add-report/all-tests, and its
@@ -931,3 +1022,4 @@
   (println (str "\n" (count results) " tests, " failed
                 (if (= failed 1) " failure" " failures")))
   (System/exit (if (pos? failed) 1 0)))
+

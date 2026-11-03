@@ -239,6 +239,11 @@ Quirks seen so far:
 - Round order that worked (linreg, 2026-10-29): spec -> M. Automate + M.
   Testeur in parallel -> M. Coureur runs `bb test` -> M. Critique reviews ->
   one small cleanup round -> Monet reviews the diff -> commit.
+- Tests that drive `update-fn` (key messages, the undo wrapper) are too much
+  for M. Testeur: the undo round (2026-11-03) came back with tests after the
+  runner's `System/exit`, `t/is` inside `let` bindings and a click
+  off-by-one. Give M. Testeur pure-function tests; Monet writes the
+  update-loop ones. New tests go BEFORE the `;; Run` section at the end.
 - Keep crew rounds small: qwen does well on one well-specified change and
   bogs down on tangled multi-bug rounds (the map/reduce fix round took ~55 min).
 - `herdr agent read` can't scroll far while an agent is working (alternate
