@@ -74,6 +74,57 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
 ## Open work
 
 - **TODO-tuiCalc.md** lists known bugs from code review.
+- **Planned: Wolfram Engine ops** (design agreed with the user 2026-11-03;
+  not built yet). tuiCalc stays on babashka, so no JLink: keep ONE
+  long-lived `wolframscript` process (started quietly at launch) and pipe
+  expressions to it. Seamless, no prefix: **Capitalized tokens go to Wolfram**
+  (`Total`, `Mean`, `Sqrt`), lowercase stay Clojure (`map`, `reduce`). How many
+  stack values a function takes comes from the engine, cached per function:
+  `SyntaxInformation[f]` required-arg count + `Attributes[f]` Listable:
+  2+ args -> that many from the top in Y, X order (`Mod`, `Power` like HP y^x);
+  1 arg Listable -> **X only** (`Sqrt` = HP sqrt key); 1 arg not Listable ->
+  **whole stack** as a list (`Total` = reduce +, `Mean`, `Sort`, `Accumulate`);
+  no syntax info -> whole stack. `map Sqrt` / `reduce Plus` = elementwise /
+  fold over the whole stack. Explicit form: `#` = whole stack, `#1` = X,
+  `#2` = Y (`Total[#^2]`, `Mod[#2, #1]`). Number result replaces what was
+  consumed; list result becomes the stack; symbolic result -> info line.
+  Info line shows what ran (`Total[{1,2,3,4}] = 10`). A row of Wolfram
+  buttons (to be chosen); hidden if no engine installed. **Graphics
+  results** (`ListPlot`, `Histogram`, `Plot[Sin[x], {x,0,2Pi}]`) are
+  exported to SVG and opened in the browser like the lr plot, stack
+  unchanged. Keep Wolfram's own chart look but in the blueline palette
+  (paper #f4f1e6, ink #1f4e9a, grid #7fa6d6), set once via SetOptions when
+  the kernel starts; the hand-built lr plot stays as is.
+- **Phase 2 (the big one): symbolic stack values**, Wolfram doing the math
+  (agreed direction 2026-11-03; build after the numeric bridge above).
+  Stack items may be Wolfram expressions (kept as their InputForm text;
+  plain numbers stay Clojure numbers). `'x` pushes the symbol x (Clojure
+  quote; `x` is already the * alias); bracket input pushes an expression.
+  Any op touching a symbolic item goes to Wolfram (`+` on x^2 and 2x ->
+  Plus[...]), numbers-only ops stay native. Exact by default (1/3, Sqrt[2])
+  with an `N` button for decimals. Same arity rules: [x^3 'x] D -> 3x^2;
+  Expand/Factor/Simplify/Integrate/Solve; [x^2 'x] Plot -> parabola.
+  Build expressions RPN-style, not typed infix: `'x 1 + 2 y^x` -> (x+1)^2
+  (ops on a symbol stay symbolic). **`fn`** (user's pick: Clojure name, can't
+  clash with Capitalized Wolfram) turns the X expression into a function of
+  its free variable, `x ↦ (x+1)^2` (= Wolfram Function[x, ...]) kept on the
+  stack: apply it to a number, `map` it over the stack, Plot/D/Integrate it.
+  **Quote = `'`, Clojure meaning, no mode:** `'` quotes the next thing.
+  `'x` = symbol x; `2 3 '+` = `2 + 3` held unevaluated (Wolfram Hold);
+  `eval` evaluates X (ReleaseHold). For clicks, a one-shot `[']` button
+  quotes the next button pressed (like the HP-15c f-shift key), so you
+  can't get stuck in a quote mode. Check the
+  **Checked on the real engine (2026-11-03, Wolfram Engine 15.0 in
+  ~/Applications, kernel path set via `wolframscript -configure`):** cold
+  `wolframscript -code` call ~3-10 s, but one long-lived `wolframscript`
+  process answers piped `Print[...]` lines in <1 ms, so keep one running.
+  `Attributes[Evaluate[f]]` (it holds its arg!) gives Listable correctly
+  (Sqrt/Sin/Abs/Log yes; Total/Mean no). `SyntaxInformation` patterns:
+  `{_,_}` = 2 args (Mod, Plot, Integrate), `{{__}}`/`{{___}}` = a list
+  (ListPlot, Histogram -> whole stack); `___`/`__`/missing are ambiguous ->
+  small override table: Power 2 (HP y^x), BinomialCoefficient 2, D 2,
+  Max/Min whole stack. Style plots with SetOptions at kernel start: passing
+  options inline fails for HoldAll functions like Plot.
 - Bug: the `map?`/`reduce?` placeholders say `4 +` / `10 +`, but the parser
   wants the op first (`map + 4`); typing `4 +` gives `Unknown: 4`. Fix the
   placeholder strings (or accept both orders). Good small crew round.
