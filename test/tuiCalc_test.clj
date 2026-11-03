@@ -508,6 +508,176 @@
     (t/is (clojure.string/includes? html "clip-path="))))
 
 ;; ---------------------------------------------------------------
+;; Wolfram Engine helpers (phase 1, numeric)
+;; ---------------------------------------------------------------
+(t/deftest wl-num
+  (t/is (= "2.5" (tc/wl-num 2.5)))
+  (t/is (= "1.0*^10" (tc/wl-num 1.0E10)))
+  (t/is (= "1.0*^-7" (tc/wl-num 1.0E-7)))
+  (t/is (= "-3.0" (tc/wl-num -3.0)))
+  (t/is (= "3.0" (tc/wl-num 3))))
+
+(t/deftest wolfram-call-line
+  (t/is (= "tcReply[tcCall[\"Total\", {1.0, 2.0}]]"
+           (tc/wolfram-call-line "Total" [1.0 2.0])))
+  (t/is (= "tcReply[tcCall[\"Total\", {}]]"
+           (tc/wolfram-call-line "Total" []))))
+
+(t/deftest parse-wolfram-reply
+  ;; NUM reply
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t4\tNUM\t10.\tTotal[{1, 2, 3, 4}] = 10")]
+    (t/is (= 4 (:k r)))
+    (t/is (= "NUM" (:kind r)))
+    (t/is (= [10.0] (:values r)))
+    (t/is (= "Total[{1, 2, 3, 4}] = 10" (:info r))))
+  ;; LIST reply
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t3\tLIST\t1. 2. 3.\tSort[{3, 1, 2}] = {1, 2, 3}")]
+    (t/is (= 3 (:k r)))
+    (t/is (= "LIST" (:kind r)))
+    (t/is (= [1.0 2.0 3.0] (:values r))))
+  ;; empty LIST reply
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t3\tLIST\t\tSort[{}] = {}")]
+    (t/is (= 3 (:k r)))
+    (t/is (= "LIST" (:kind r)))
+    (t/is (= [] (:values r))))
+  ;; SYM reply
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t0\tSYM\t0. + 2.*I\tSqrt[-4] = 0. + 2.*I")]
+    (t/is (= 0 (:k r)))
+    (t/is (= "SYM" (:kind r)))
+    (t/is (= [] (:values r)))
+    (t/is (= "Sqrt[-4] = 0. + 2.*I" (:info r))))
+  ;; GFX reply
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t0\tGFX\t/var/tuiCalc-wolfram.svg\tListPlot[{1, 4, 9}]")]
+    (t/is (= 0 (:k r)))
+    (t/is (= "GFX" (:kind r)))
+    (t/is (= "/var/tuiCalc-wolfram.svg" (:path r))))
+  ;; ERR reply
+  (let [r (tc/parse-wolfram-reply "TC\tERR\tNeed 2 values")]
+    (t/is (= "Need 2 values" (:error r))))
+  ;; nil line
+  (t/is (= {:error "Wolfram: bad reply"} (tc/parse-wolfram-reply nil)))
+  ;; garbage line
+  (t/is (= {:error "Wolfram: bad reply"} (tc/parse-wolfram-reply "garbage"))))
+
+(t/deftest submit-wolfram-total
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack [1.0 2.0 3.0 4.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t4\tNUM\t10.\tTotal[{1, 2, 3, 4}] = 10"))
+        state (typed state "Total")
+        [result-state cmd] (tc/submit state)]
+    (t/is (= [10.0] (:stack result-state)))
+    (t/is (= "Total[{1, 2, 3, 4}] = 10" (:info result-state)))
+    (t/is (nil? cmd))
+    (t/is (= ["tcReply[tcCall[\"Total\", {1.0, 2.0, 3.0, 4.0}]]"] @sent))))
+
+(t/deftest submit-wolfram-sqrt
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack [5.0 9.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t3.\tSqrt[9] = 3"))
+        state (typed state "Sqrt")
+        [result-state _] (tc/submit state)]
+    (t/is (= [5.0 3.0] (:stack result-state)))))
+
+(t/deftest submit-wolfram-sort
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack [3.0 1.0 2.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t3\tLIST\t1. 2. 3.\tSort[{3, 1, 2}] = {1, 2, 3}"))
+        state (typed state "Sort")
+        [result-state _] (tc/submit state)]
+    (t/is (= [1.0 2.0 3.0] (:stack result-state)))))
+
+(t/deftest submit-wolfram-sym-and-err
+  ;; SYM reply: stack unchanged, info set
+  (let [state (assoc (first (tc/init)) :stack [5.0]
+                     :wolfram (fn [_] "TC\tOK\t0\tSYM\t0. + 2.*I\tSqrt[-4] = 0. + 2.*I"))
+        state (typed state "Sqrt")
+        [result-state _] (tc/submit state)]
+    (t/is (= [5.0] (:stack result-state)))
+    (t/is (= "Sqrt[-4] = 0. + 2.*I" (:info result-state))))
+  ;; ERR reply: stack unchanged, status set
+  (let [state (assoc (first (tc/init)) :stack [5.0]
+                     :wolfram (fn [_] "TC\tERR\tNeed 2 values"))
+        state (typed state "Sqrt")
+        [result-state _] (tc/submit state)]
+    (t/is (= [5.0] (:stack result-state)))
+    (t/is (= "Need 2 values" (:status result-state)))))
+
+(t/deftest submit-wolfram-no-engine
+  (let [state (assoc (first (tc/init)) :stack [9.0] :wolfram nil)]
+    (t/is (= "No Wolfram Engine (install wolframscript)"
+             (:status (first (tc/submit (typed state "Sqrt"))))))))
+
+(t/deftest submit-wolfram-nan
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack [Double/NaN]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t0.\tSqrt[NaN] = 0"))
+        state (typed state "Sqrt")
+        [result-state _] (tc/submit state)]
+    (t/is (= "Wolfram needs finite numbers" (:status result-state)))
+    (t/is (= [] @sent))))
+
+(t/deftest run-action-wolfram-sqrt
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack []
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t3.\tSqrt[9] = 3"))
+        state (update state :input assoc :value (vec "9"))
+        [result-state _] (tc/run-action state "Sqrt")]
+    (t/is (some #(clojure.string/includes? % "{9.0}") @sent))
+    (t/is (= [3.0] (:stack result-state)))))
+
+(t/deftest run-action-wolfram-plot
+  (let [sent (atom [])
+        state (assoc (first (tc/init)) :stack [1.0 4.0 9.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t0\tGFX\t/var/tuiCalc-wolfram.svg\tListPlot[{1, 4, 9}]"))
+        [result-state cmd] (tc/run-action state "ListPlot")]
+    (t/is (= [1.0 4.0 9.0] (:stack result-state)))
+    (t/is (clojure.string/includes? (:info result-state) "ListPlot"))
+    (t/is (some? cmd))))
+
+(t/deftest submit-lowercase-unknown-and-pi
+  ;; lowercase total -> Unknown
+  (let [state (assoc (first (tc/init)) :stack []
+                     :wolfram (fn [_] (throw (Exception. "should not call"))))]
+    (t/is (= "Unknown: total" (:status (first (tc/submit (typed state "total")))))))
+  ;; Pi still pushes Math/PI
+  (t/is (= [Math/PI] (submit->stack "Pi"))))
+
+(t/deftest wolfram-button-and-help
+  (t/is (= "Sqrt" (tc/button-for-token "sqrt")))
+  (t/is (= "Total" (tc/button-for-token "total")))
+  ;; 4th help row contains all 8 labels
+  (let [row (nth (tc/help-lines) 3)]  ; 0-indexed, so row 3 = 4th row
+    (t/is (clojure.string/includes? row "[Sqrt]"))
+    (t/is (clojure.string/includes? row "[Mod]"))
+    (t/is (clojure.string/includes? row "[Total]"))
+    (t/is (clojure.string/includes? row "[Mean]"))
+    (t/is (clojure.string/includes? row "[Sort]"))
+    (t/is (clojure.string/includes? row "[Max]"))
+    (t/is (clojure.string/includes? row "[Min]"))
+    (t/is (clojure.string/includes? row "[ListPlot]"))))
+
+(t/deftest click-wolfram-total-button
+  (let [line (nth (tc/help-lines) 3)  ; 4th row
+        start (.indexOf line "[Total]")
+        y (+ tc/help-row0 4)]
+    (t/is (<= 0 start))
+    (t/is (= "Total" (tc/find-button-at (inc start) y)))
+    (t/is (= "Total" (tc/find-button-at (+ start 6) y)))
+    (t/is (not= "Total" (tc/find-button-at (+ start 8) y)))))
+
+;; ---------------------------------------------------------------
 ;; sig6 — 6-significant-digit formatting
 ;; ---------------------------------------------------------------
 (t/deftest sig6

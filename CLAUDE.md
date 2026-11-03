@@ -215,6 +215,12 @@ Quirks seen so far:
   (parses only, doesn't load; needs `{:all true}` for the regex literals).
   The paren-repair hook (see Run & test) should prevent most of these; if a
   pane still hand-counts parens, check the hook is installed and restart it.
+- The paren hook **trusts indentation**: a continuation line indented past
+  an already-closed `[` gets pulled inside it. `(fn [line] (swap! ...)` with
+  the next line aligned under `(swap!` became `(fn [line (swap! ...) "..."])`
+  in 6 test stubs (2026-11-03). Put a multi-line `fn` body on its own lines,
+  two spaces past `(fn`. To repair a file the hook keeps mangling, edit it
+  from Bash (the hook only runs on Write/Edit).
 - Verify, don't trust, a crew reply: M. Testeur once replied with a list of
   tests he hadn't written. Ask for `git diff --stat <file>` in the reply, and
   check the diff before passing work on.

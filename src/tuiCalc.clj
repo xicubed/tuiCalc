@@ -2,12 +2,14 @@
 
 (ns tuiCalc
   (:require
+   [babashka.fs :as fs]
    [babashka.process :as process]
    [charm.components.text-input :as text-input]
    [charm.message :as msg]
    [charm.program :as program]
    [charm.render.core :as render]
    [charm.style.core :as style]
+   [clojure.java.io :as io]
    [clojure.string :as str]))
 
 ;; NOTE (babashka): defn bodies are analyzed at load time, so each
@@ -481,6 +483,122 @@
             points (partition 2 (:stack state))]
         [state' (plot-cmd (plot-html points m b))]))))
 
+;; ------------------------------------------------------------
+;; Wolfram Engine
+;; ------------------------------------------------------------
+
+(def wl-path (str (fs/parent (fs/absolutize *file*)) "/tuiCalc.wl"))
+
+;; Start one long-lived wolframscript and load tuiCalc.wl into it.
+;; Returns a send fn: line -> the reply line (from "TC\t" on), or nil
+;; on timeout. The kernel prints its In[n]:= prompt on the same line
+;; as our reply, so look for the marker anywhere in the line.
+(defn start-wolfram [wl-path]
+  (try
+    (let [p    (process/process ["wolframscript"] {:err :discard})
+          w    (io/writer (:in p))
+          r    (io/reader (:out p))
+          lock (Object.)
+          send-line (fn [line]
+                      (locking lock
+                        (.write w (str line "\n"))
+                        (.flush w)
+                        (deref (future
+                                 (try
+                                   (loop []
+                                     (when-let [l (.readLine r)]
+                                       (if-let [i (str/index-of l "TC\t")]
+                                         (subs l i)
+                                         (recur))))
+                                   (catch Exception _ nil)))
+                              20000 nil)))]
+      (send-line (str "Get[\"" wl-path "\"]; Print[\"TC\\tREADY\"]"))
+      ;; Warm up graphics now: the first plot otherwise takes ~10 s.
+      (send-line "tcReply[tcCall[\"ListPlot\", {1., 2.}]]")
+      send-line)
+    (catch Exception _ nil)))
+
+;; The fn kept in state as :wolfram. Never blocks while the engine is
+;; still starting (engine = a future of start-wolfram's result).
+(defn wolfram-sender [engine]
+  (fn [line]
+    (cond
+      (not (realized? engine)) "TC\tERR\tWolfram is starting, try again in a moment"
+      (nil? @engine)           "TC\tERR\tWolfram Engine failed to start"
+      :else (or (@engine line) "TC\tERR\tWolfram timed out"))))
+
+;; Set by -main when wolframscript is installed; init copies it into state.
+(def wolfram-fn (atom nil))
+
+;; Wolfram number text: 2.5 -> "2.5", 1.0E10 -> "1.0*^10", 3 -> "3.0"
+(defn wl-num [d]
+  (str/replace (str (double d)) "E" "*^"))
+
+;; Build tcReply[tcCall["Name", {v1, v2, ...}]]
+(defn wolfram-call-line [name stack]
+  (let [nums (map wl-num stack)
+        args (if (empty? nums) "{}" (str "{" (str/join ", " nums) "}"))]
+    (str "tcReply[tcCall[\"" name "\", " args "]]")))
+
+;; Parse Wolfram reply line into a map
+(defn parse-wolfram-reply [line]
+  (if (nil? line)
+    {:error "Wolfram: bad reply"}
+    (if (not (str/starts-with? line "TC\t"))
+      {:error "Wolfram: bad reply"}
+      (let [parts (str/split line #"\t" -1)
+            status (nth parts 1 nil)]
+        (if (= status "ERR")
+          {:error (nth parts 2 nil)}
+          (let [k (some-> (nth parts 2 nil) Double/parseDouble long)
+                kind (nth parts 3 nil)
+                payload (nth parts 4 nil)
+                info (nth parts 5 nil)]
+            (cond
+              (= kind "NUM") {:k k :kind "NUM" :values [(Double/parseDouble payload)] :info info}
+              (= kind "LIST") {:k k :kind "LIST" :values (if (str/blank? payload) [] (mapv Double/parseDouble (str/split payload #"\s+"))) :info info}
+              (= kind "SYM") {:k 0 :kind "SYM" :values [] :info info}
+              (= kind "GFX") {:k 0 :kind "GFX" :path payload :info info}
+              :else {:error "Wolfram: unknown reply"})))))))
+
+;; HTML page for GFX (SVG) display
+(defn wolfram-plot-html [path info]
+  (str "<!doctype html>\n"
+       "<html>\n<head><title>tuiCalc — " info "</title></head>\n"
+       "<body style=\"background:#f4f1e6;margin:0;padding:20px;text-align:center;\">\n"
+       "<img src=\"file://" path "\" style=\"max-width:100%;max-height:80vh;\">\n"
+       "<p style=\"font-family:sans-serif;color:#1f4e9a;\">" info "</p>\n"
+       "</body>\n</html>"))
+
+;; Wolfram operation: [state cmd]
+(defn wolfram-op [state name]
+  (let [state (commit-input state)
+        wolfram (:wolfram state)]
+    (if (nil? wolfram)
+      [(assoc state :status "No Wolfram Engine (install wolframscript)") nil]
+      (let [stack (:stack state)]
+        ;; Check for NaN/Infinity
+        (if (some #(or (Double/isNaN %) (Double/isInfinite %)) stack)
+          [(assoc state :status "Wolfram needs finite numbers") nil]
+          (let [line (wolfram-call-line name stack)
+                reply (wolfram line)
+                parsed (parse-wolfram-reply reply)]
+            (if (:error parsed)
+              [(assoc state :status (:error parsed)) nil]
+              (let [k (:k parsed)
+                    values (:values parsed)
+                    info (:info parsed)
+                    stack (into (subvec stack 0 (- (count stack) k)) values)]
+                (case (:kind parsed)
+                  "GFX"
+                  [(assoc state :info info) (plot-cmd (wolfram-plot-html (:path parsed) info))]
+                  [(assoc state :stack stack :info info) nil])))))))))
+
+;; Wolfram button row
+(def wolfram-row [["Sqrt" "[Sqrt]"] ["Mod" "[Mod]"] ["Total" "[Total]"]
+                  ["Mean" "[Mean]"] ["Sort" "[Sort]"] ["Max" "[Max]"] ["Min" "[Min]"]
+                  ["ListPlot" "[ListPlot]"]])
+
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
   (assoc state
@@ -717,13 +835,15 @@
                 :status status)
          nil])
 
-      ;; Otherwise try to push a number.
+      ;; Otherwise try to push a number or Wolfram command.
       :else
       (if-let [n (parse-number token)]
         [(update state :stack conj n) nil]
-        [(assoc state
-                :status (str "Unknown: " raw))
-         nil]))))
+        (if (re-matches #"[A-Z][A-Za-z0-9]*" raw)
+          (wolfram-op state raw)
+          [(assoc state
+                  :status (str "Unknown: " raw))
+           nil])))))
 
 ;; Help buttons, grouped into rows. Each button is [action display];
 ;; the rows render as the help lines and drive click hit-testing, so
@@ -733,7 +853,8 @@
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
     ["reverse" "[reverse]"] ["get" "[GET]"]]
-   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["q" "[q]"]]])
+   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["q" "[q]"]]
+   wolfram-row])
 
 ;; Faint legend under the buttons.
 (def hint-line
@@ -810,25 +931,27 @@
 ;; Returns [new-state command]. The caller adds the flash on top.
 ;; Any action other than [GET] cancels a pending level prompt.
 (defn run-action [state action]
-  (case action
-    "CHS"     [(chs state) nil]
-    "INV"     [(inv state) nil]
-    "pi"      [(push-pi state) nil]
-    "clear"   [(assoc state :stack []) nil]
-    "drop"    [(pop-top state) nil]
-    "swap"    [(swap-xy state) nil]
-    "peek"    [(peek-top state) nil]
-    "count"   [(count-stack state) nil]
-    "reverse" [(reverse-stack state) nil]
-    "get"     [(start-level-prompt state "get" "get? ") nil]
-    "map"     [(start-map-reduce-prompt state "map" "map? "
-                                        "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
-    "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
-                                        "[start] op: +, *, /, 10 + (sum+10)") nil]
-    "linreg"  (linreg-action state)
-    "q"       [state program/quit-cmd]
-    "enter"   (submit state)
-    [(execute-op state action) nil]))
+  (if (some #(= action (first %)) wolfram-row)
+    (wolfram-op state action)
+    (case action
+      "CHS"     [(chs state) nil]
+      "INV"     [(inv state) nil]
+      "pi"      [(push-pi state) nil]
+      "clear"   [(assoc state :stack []) nil]
+      "drop"    [(pop-top state) nil]
+      "swap"    [(swap-xy state) nil]
+      "peek"    [(peek-top state) nil]
+      "count"   [(count-stack state) nil]
+      "reverse" [(reverse-stack state) nil]
+      "get"     [(start-level-prompt state "get" "get? ") nil]
+      "map"     [(start-map-reduce-prompt state "map" "map? "
+                                          "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
+      "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
+                                          "[start] op: +, *, /, 10 + (sum+10)") nil]
+      "linreg"  (linreg-action state)
+      "q"       [state program/quit-cmd]
+      "enter"   (submit state)
+      [(execute-op state action) nil])))
 
 ;; Ctrl-key shortcuts (no ctrl conflicts with the text input's own
 ;; bindings -- it uses ctrl a b d e f h k u w). Values are actions, so
@@ -863,6 +986,15 @@
     "map" "map"
     "reduce" "reduce"
     "linreg" "linreg" "lr" "linreg"
+    ;; Wolfram buttons (lowercased token -> button name)
+    "sqrt" "Sqrt"
+    "mod" "Mod"
+    "total" "Total"
+    "mean" "Mean"
+    "sort" "Sort"
+    "max" "Max"
+    "min" "Min"
+    "listplot" "ListPlot"
     "pow" "^"
     (when (and (string? token) (contains? ops token))
       ;; "x" is an ops alias for the "*" button.
@@ -921,7 +1053,8 @@
              :width 30)
     :status  nil
     :info    nil
-    :pending nil}
+    :pending nil
+    :wolfram @wolfram-fn}
    nil])
 
 
@@ -1156,6 +1289,8 @@
 
 (defn -main [& _]
   (clear-on-resize!)
+  (when-let [wl (fs/which "wolframscript")]
+    (reset! wolfram-fn (wolfram-sender (future (start-wolfram wl-path)))))
   (program/run
    {:init init
     :update update-fn
