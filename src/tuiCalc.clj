@@ -609,10 +609,37 @@
                   [(assoc state :info info) (plot-cmd (wolfram-plot-html (:path parsed) info))]
                   [(assoc state :stack stack :info info) nil])))))))))
 
-;; Wolfram button row
-(def wolfram-row [["Sqrt" "[Sqrt]"] ["Mod" "[Mod]"] ["Total" "[Total]"]
-                  ["Mean" "[Mean]"] ["Sort" "[Sort]"] ["Max" "[Max]"] ["Min" "[Min]"]
-                  ["ListPlot" "[ListPlot]"]])
+;; Wolfram menu structure: folders at top level, functions inside.
+(def wolfram-menu
+  [["Math"  ["Sqrt" "Abs" "Round" "Floor" "Mod" "Factorial"]]
+   ["Stats" ["Total" "Mean" "Median" "StandardDeviation" "Variance"]]
+   ["Lists" ["Sort" "Max" "Min" "Accumulate" "Differences"]]
+   ["Plots" ["ListPlot" "ListLinePlot" "Histogram"]]])
+
+;; Return the folder name containing function `name`, or nil.
+(defn menu-folder-of [name]
+  (some (fn [[folder fns]]
+          (when (some #(= % name) fns)
+            folder))
+        wolfram-menu))
+
+;; True when `name` is a function in any folder.
+(defn menu-fn? [name]
+  (some? (menu-folder-of name)))
+
+;; Return the 4th row as [action display] pairs.
+;; - If (:menu state) is nil: show folder buttons.
+;; - If (:menu state) is a folder name: show back button + functions.
+(defn menu-row [state]
+  (if-let [folder (:menu state)]
+    ;; Inside a folder: back button first, then function buttons.
+    (into [["menu:back" "[◂ back]"]]
+          (map (fn [f] [f (str "[" f "]")])
+               (second (first (filter #(= folder (first %)) wolfram-menu)))))
+    ;; Top level: one button per folder.
+    (map (fn [[folder _]]
+           [(str "menu:" folder) (str "[" folder " ▸]")])
+         wolfram-menu)))
 
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
@@ -867,20 +894,28 @@
 ;; Help buttons, grouped into rows. Each button is [action display];
 ;; the rows render as the help lines and drive click hit-testing, so
 ;; labels and positions can never drift apart.
-(def help-rows
+;; First 3 rows are static; 4th row is dynamic (menu-row).
+(def help-rows-static
   [[["+" "[+]"] ["-" "[-]"] ["*" "[*]"] ["/" "[/]"] ["^" "[y^x]"] ["CHS" "[CHS]"] ["INV" "[INV]"] ["pi" "[pi]"]]
    [["enter" "[ENTER]"] ["clear" "[CLEAR]"] ["drop" "[drop]"]
     ["swap" "[x<>y]"] ["peek" "[peek]"] ["count" "[count]"]
     ["reverse" "[reverse]"] ["get" "[GET]"]]
-   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["undo" "[undo]"] ["q" "[q]"]]
-   wolfram-row])
+   [["map" "[map]"] ["reduce" "[reduce]"] ["linreg" "[L.R.]"] ["undo" "[undo]"] ["q" "[q]"]]])
+
+;; Button rows for a given state: static rows + dynamic menu row.
+(defn button-rows [state]
+  (concat help-rows-static [(menu-row state)]))
 
 ;; Faint legend under the buttons.
 (def hint-line
   "^x drop ^s chs ^v inv ^t peek ^n count ^r rev ^l clear ^p pi ^g get ^ pow ^z undo")
 
-(defn help-lines []
-  (map #(str/join "  " (map second %)) help-rows))
+;; Render help lines from button rows.
+;; Two arities: (help-lines state) renders (button-rows state);
+;; (help-lines) = (help-lines {}) for top-level rendering.
+(defn help-lines
+  ([] (help-lines {}))
+  ([state] (map #(str/join "  " (map second %)) (button-rows state))))
 
 ;; Terminal row (0-based) of the top help line.
 ;; Layout: title(1) + stack(stack-height) + border(1) + blank(1) +
@@ -894,20 +929,24 @@
 ;; charm passes the terminal's raw 1-based mouse coords (top row is y=1,
 ;; leftmost column is x=1); help-row0 and indexOf are 0-based, so
 ;; normalize here.
-(defn find-button-at [x y]
-  (let [x       (dec x)
-        y       (dec y)
-        row-idx (- y help-row0)]
-    (when (and (>= row-idx 0) (< row-idx (count help-rows)))
-      (let [row  (nth help-rows row-idx)
-            line (str/join "  " (map second row))]
-        (some
-         (fn [[action display]]
-           (let [start (.indexOf line display)]
-             (when (and (>= x start)
-                        (< x (+ start (count display))))
-               action)))
-         row)))))
+;; Two arities: [state x y] hit-tests (button-rows state);
+;; [x y] = (find-button-at {} x y) for top-level.
+(defn find-button-at
+  ([x y] (find-button-at {} x y))
+  ([state x y]
+   (let [x       (dec x)
+         y       (dec y)
+         row-idx (- y help-row0)]
+     (when (and (>= row-idx 0) (< row-idx (count (button-rows state))))
+       (let [row  (nth (button-rows state) row-idx)
+             line (str/join "  " (map second row))]
+         (some
+          (fn [[action display]]
+            (let [start (.indexOf line display)]
+              (when (and (>= x start)
+                         (< x (+ start (count display))))
+                action)))
+          row))))))
 
 ;; -------------------------------------------------------------
 ;; Button "flash" -- a rainbow sweep over ~2s so a screen-share
@@ -944,34 +983,44 @@
      {:type :flash-tick})))
 
 (defn with-flash [state action]
-  (assoc state :flash {:action action :frame 0}))
+  (let [new-menu (if (menu-fn? action)
+                   (menu-folder-of action)
+                   (:menu state))]
+    (assoc state :flash {:action action :frame 0}
+                  :menu new-menu)))
 
 ;; Run a button action (shared by mouse clicks and keyboard shortcuts).
 ;; Returns [new-state command]. The caller adds the flash on top.
 ;; Any action other than [GET] cancels a pending level prompt.
 (defn run-action [state action]
-  (if (some #(= action (first %)) wolfram-row)
-    (wolfram-op state action)
-    (case action
-      "CHS"     [(chs state) nil]
-      "INV"     [(inv state) nil]
-      "pi"      [(push-pi state) nil]
-      "clear"   [(assoc state :stack []) nil]
-      "drop"    [(pop-top state) nil]
-      "swap"    [(swap-xy state) nil]
-      "peek"    [(peek-top state) nil]
-      "count"   [(count-stack state) nil]
-      "reverse" [(reverse-stack state) nil]
-      "get"     [(start-level-prompt state "get" "get? ") nil]
-      "map"     [(start-map-reduce-prompt state "map" "map? "
-                                          "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
-      "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
-                                          "[start] op: +, *, /, 10 + (sum+10)") nil]
-      "linreg"  (linreg-action state)
-      "undo"    [(undo state) nil]
-      "q"       [state program/quit-cmd]
-      "enter"   (submit state)
-      [(execute-op state action) nil])))
+  (case action
+    "menu:back" [(assoc state :menu nil) nil]
+    (if (re-matches #"menu:.*" action)
+      ;; Folder navigation: extract folder name from "menu:<Folder>"
+      [(assoc state :menu (subs action 5)) nil]
+      (if (menu-fn? action)
+        ;; Wolfram function: run via Wolfram Engine
+        (wolfram-op state action)
+        (case action
+          "CHS"     [(chs state) nil]
+          "INV"     [(inv state) nil]
+          "pi"      [(push-pi state) nil]
+          "clear"   [(assoc state :stack []) nil]
+          "drop"    [(pop-top state) nil]
+          "swap"    [(swap-xy state) nil]
+          "peek"    [(peek-top state) nil]
+          "count"   [(count-stack state) nil]
+          "reverse" [(reverse-stack state) nil]
+          "get"     [(start-level-prompt state "get" "get? ") nil]
+          "map"     [(start-map-reduce-prompt state "map" "map? "
+                                              "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
+          "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
+                                              "[start] op: +, *, /, 10 + (sum+10)") nil]
+          "linreg"  (linreg-action state)
+          "undo"    [(undo state) nil]
+          "q"       [state program/quit-cmd]
+          "enter"   (submit state)
+          [(execute-op state action) nil])))))
 
 ;; Ctrl-key shortcuts (no ctrl conflicts with the text input's own
 ;; bindings -- it uses ctrl a b d e f h k u w). Values are actions, so
@@ -1008,19 +1057,18 @@
     "reduce" "reduce"
     "linreg" "linreg" "lr" "linreg"
     "undo" "undo"
-    ;; Wolfram buttons (lowercased token -> button name)
-    "sqrt" "Sqrt"
-    "mod" "Mod"
-    "total" "Total"
-    "mean" "Mean"
-    "sort" "Sort"
-    "max" "Max"
-    "min" "Min"
-    "listplot" "ListPlot"
     "pow" "^"
-    (when (and (string? token) (contains? ops token))
-      ;; "x" is an ops alias for the "*" button.
-      (if (= token "x") "*" token))))
+    ;; Wolfram menu: look up token in all folders
+    (let [lower (str/lower-case (str token))
+          found (some (fn [[_ fns]]
+                        (some (fn [f]
+                                (when (= lower (str/lower-case f)) f))
+                              fns))
+                      wolfram-menu)]
+      (or found
+          (when (and (string? token) (contains? ops token))
+            ;; "x" is an ops alias for the "*" button.
+            (if (= token "x") "*" token))))))
 
 ;; The button that should flash for an activation. For "enter" (key
 ;; or click), the pending input decides: typing "chs" then Enter
@@ -1045,7 +1093,7 @@
 (defn handle-click [state x y]
   ;; Buttons are only shown when the help line isn't showing an error.
   (let [btn (when (not (:status state))
-              (find-button-at x y))]
+              (find-button-at state x y))]
     (if btn
       ;; A pending level prompt is abandoned when a DIFFERENT button is
       ;; clicked; [ENTER] finishes the prompt; [GET] keeps it going.
@@ -1077,6 +1125,7 @@
     :info    nil
     :pending nil
     :undo    []
+    :menu    nil
     :wolfram @wolfram-fn}
    nil])
 
@@ -1260,8 +1309,8 @@
         ;; showing, the error takes row 0 and the rest go blank.
         rows (if (:status state)
                (cons (style/render error-style (:status state))
-                     (repeat (dec (count help-rows)) ""))
-               (map #(render-buttons-row % (:flash state)) help-rows))
+                     (repeat (dec (count (button-rows state))) ""))
+               (map #(render-buttons-row % (:flash state)) (button-rows state)))
 
         help (str/join "\n" rows)
 
