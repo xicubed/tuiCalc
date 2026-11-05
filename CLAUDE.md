@@ -154,6 +154,28 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   `map`/`reduce` for free (`reduce max`, `map max 0` clamps negatives).
 - Maybe: make the two-step prompts look like an open form, `(map `, `(get `
   (trailing `?` means predicate in Clojure, and `map?` is a real fn).
+- **Planned (after phase 2): hierarchical menus + search** (idea agreed
+  with the user 2026-11-05). Goal: reach ~6,700 documented Wolfram
+  functions (7,915 `System`` names) from the TUI and, someday, a keypad
+  or phone UI. Design: (1) pinned rows stay as they are (arithmetic,
+  stack ops, map/reduce = HP keys). (2) Below them, folder buttons like
+  `[Stats ▸]` open one level at a time with `[◂ back]` (HP-48
+  soft-menu style). (3) Type-to-filter: typing `Mea` turns the button
+  rows into matching functions, ENTER runs the first match. Search
+  matters more than browsing at this scale. (4) We pick ~8 top-level
+  folders (Arithmetic, Stats, Lists, Algebra, Calculus, Plots, Number
+  theory, Constants); the engine fills them:
+  `WolframLanguageData[f, "RelatedGuidePages"]` lists the doc guides a
+  function belongs to (Mean -> Descriptive Statistics, Arithmetic
+  Functions, ...), and guides nest into sub-guides. Skip the noise
+  guides ("Summary of New Features in ...", GPU Computing ...). Build
+  the tree once and cache it; don't query it at launch. Code impact:
+  `help-rows` is flat but drives both rendering and click hit-testing,
+  so a tree plus a `:menu-path` in state keeps clicks consistent.
+  `find-button-at` must read the rows currently shown, not the static
+  `help-rows`; a folder or search result bigger than the screen needs
+  paging (`[more ▸]`). Cheap first
+  step: group the Wolfram row into 2–3 folders and add type-to-filter.
 
 ## Crew demo (Herdr)
 
