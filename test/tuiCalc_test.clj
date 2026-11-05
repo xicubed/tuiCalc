@@ -512,13 +512,20 @@
 ;; ---------------------------------------------------------------
 (t/deftest wl-num
   (t/is (= "2.5" (tc/wl-num 2.5)))
-  (t/is (= "1.0*^10" (tc/wl-num 1.0E10)))
+  (t/is (= "10000000000" (tc/wl-num 1.0E10)))
+  (t/is (= "1.0*^20" (tc/wl-num 1.0E20)))       ; too big to be exact: stays real
   (t/is (= "1.0*^-7" (tc/wl-num 1.0E-7)))
-  (t/is (= "-3.0" (tc/wl-num -3.0)))
-  (t/is (= "3.0" (tc/wl-num 3))))
+  (t/is (= "-3" (tc/wl-num -3.0)))              ; whole -> exact integer
+  (t/is (= "3" (tc/wl-num 3)))
+  ;; Non-finite values keep the real format (wolfram-op blocks them
+  ;; before sending anyway); -0.0 is the integer 0.
+  (t/is (= "Infinity" (tc/wl-num Double/POSITIVE_INFINITY)))
+  (t/is (= "-Infinity" (tc/wl-num Double/NEGATIVE_INFINITY)))
+  (t/is (= "NaN" (tc/wl-num Double/NaN)))
+  (t/is (= "0" (tc/wl-num -0.0))))
 
 (t/deftest wolfram-call-line
-  (t/is (= "tcReply[tcCall[\"Total\", {1.0, 2.0}]]"
+  (t/is (= "tcReply[tcCall[\"Total\", {1, 2}]]"
            (tc/wolfram-call-line "Total" [1.0 2.0])))
   (t/is (= "tcReply[tcCall[\"Total\", {}]]"
            (tc/wolfram-call-line "Total" []))))
@@ -570,7 +577,7 @@
     (t/is (= [10.0] (:stack result-state)))
     (t/is (= "Total[{1, 2, 3, 4}] = 10" (:info result-state)))
     (t/is (nil? cmd))
-    (t/is (= ["tcReply[tcCall[\"Total\", {1.0, 2.0, 3.0, 4.0}]]"] @sent))))
+    (t/is (= ["tcReply[tcCall[\"Total\", {1, 2, 3, 4}]]"] @sent))))
 
 (t/deftest submit-wolfram-sqrt
   (let [sent (atom [])
@@ -632,7 +639,7 @@
                                 "TC\tOK\t1\tNUM\t3.\tSqrt[9] = 3"))
         state (update state :input assoc :value (vec "9"))
         [result-state _] (tc/run-action state "Sqrt")]
-    (t/is (some #(clojure.string/includes? % "{9.0}") @sent))
+    (t/is (some #(clojure.string/includes? % "{9}") @sent))
     (t/is (= [3.0] (:stack result-state)))))
 
 (t/deftest run-action-wolfram-plot
@@ -1095,6 +1102,125 @@
 
 (t/deftest pow-token-flashes-power-button
   (t/is (= "^" (tc/button-for-token "pow"))))
+
+;; ---------------------------------------------------------------
+;; Wolfram type-to-filter search (spec-menus-r2.md)
+;; ---------------------------------------------------------------
+
+;; Test 1: search-matches returns Mean first for "Mea", count 13
+(t/deftest search-01-search-matches-mea
+  (t/is (= "Mean" (first (tc/search-matches "Mea"))))
+  (t/is (= 13 (count (tc/search-matches "Mea")))))
+
+;; Test 2: search-matches for "Fib"
+(t/deftest search-02-search-matches-fib
+  (t/is (= ["Fibonacci" "Fibonorial"] (tc/search-matches "Fib"))))
+
+;; Test 3: search-matches for "Lis" - menu functions first, then shortest
+(t/deftest search-03-search-matches-lis
+  (t/is (= ["ListPlot" "ListLinePlot" "List"] (take 3 (tc/search-matches "Lis")))))
+
+;; Test 4: search-matches for non-existent prefix
+(t/deftest search-04-search-matches-zzq
+  (t/is (= [] (tc/search-matches "Zzq"))))
+
+;; Test 5: search-pick returns exact match or first match or unchanged
+(t/deftest search-05-search-pick
+  (t/is (= "Fibonacci" (tc/search-pick "Fib")))
+  (t/is (= "Sqrt" (tc/search-pick "Sqrt")))
+  (t/is (= "Max" (tc/search-pick "Max")))
+  (t/is (= "Zzq" (tc/search-pick "Zzq"))))
+
+;; Test 6: search-row for "Fib"
+(t/deftest search-06-search-row-fib
+  (t/is (= [["run:Fibonacci" "[Fibonacci]"]
+            ["run:Fibonorial" "[Fibonorial]"]]
+           (tc/search-row "Fib"))))
+
+;; Test 7: search-row for "Mea" and "Zzq"
+(t/deftest search-07-search-row-mea-zzq
+  (t/is (= [["run:Mean" "[Mean]"]
+            ["run:MeanShift" "[MeanShift]"]
+            ["run:MeanAround" "[MeanAround]"]
+            ["run:MeanFilter" "[MeanFilter]"]
+            ["run:MeanDeviation" "[MeanDeviation]"]
+            [nil "+8"]]
+           (tc/search-row "Mea")))
+  (t/is (= [[nil "(no Wolfram match)"]]
+           (tc/search-row "Zzq"))))
+
+;; Test 8: row length constraint for various prefixes
+(t/deftest search-08-row-length-constraint
+  (doseq [p ["M" "Me" "Mea" "Lis" "S" "P"]]
+    (t/is (<= (count (nth (tc/help-lines (typed fresh p)) 3)) 70)
+          (str "Prefix " p " row too long: "
+               (count (nth (tc/help-lines (typed fresh p)) 3)) " chars"))))
+
+;; Test 9: menu-row picks search only for Capitalized word
+(t/deftest search-09-menu-row-search-vs-folders
+  (t/is (= (tc/search-row "Fib")
+           (tc/menu-row (typed fresh "Fib"))))
+  (t/is (= (tc/menu-row fresh)
+           (tc/menu-row (typed fresh "map"))))
+  (t/is (= (tc/menu-row fresh)
+           (tc/menu-row (typed fresh "Mod 3"))))
+  (t/is (= (tc/menu-row fresh)
+           (tc/menu-row (assoc (typed fresh "Fib") :pending "get")))))
+
+;; Test 10: ENTER runs the pick (Fibonacci on stack [10])
+(t/deftest search-10-enter-runs-pick
+  (let [sent (atom [])
+        state (assoc fresh :stack [10.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t55.\tFibonacci[10] = 55"))
+        state (typed state "Fib")
+        [result-state _] (tc/submit state)]
+    (t/is (some #(clojure.string/includes? % "Fibonacci") @sent))
+    (t/is (= [55.0] (:stack result-state)))))
+
+;; Test 11: clicking a search result runs the action
+(t/deftest search-11-click-search-result
+  (let [sent (atom [])
+        state (assoc fresh :stack [10.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t55.\tFibonacci[10] = 55"))
+        state (typed state "Fib")
+        line (nth (tc/help-lines state) 3)
+        start (.indexOf line "[Fibonacci]")]
+    (t/is (<= 0 start))
+    (t/is (= "run:Fibonacci"
+             (tc/find-button-at state (inc start) (+ tc/help-row0 4))))
+    (let [[result-state _] (tc/run-action state "run:Fibonacci")]
+      (t/is (= [55.0] (:stack result-state)))
+      (t/is (= "" (tc/input-text result-state))))
+    (let [[result-state _] (tc/handle-click state (inc start) (+ tc/help-row0 4))]
+      (t/is (= [55.0] (:stack result-state))))))
+
+;; Test 12: flash-for-action for search and non-clickable +N
+(t/deftest search-12-flash-and-non-clickable
+  (t/is (= "Mean" (tc/flash-for-action (typed fresh "Mea") "enter")))
+  (t/is (= "Median" (tc/flash-for-action fresh "run:Median")))
+  (t/is (= "CHS" (tc/flash-for-action (typed fresh "chs") "enter")))
+  (let [line (nth (tc/help-lines (typed fresh "Mea")) 3)
+        start (.indexOf line "+8")]
+    (t/is (<= 0 start))
+    (t/is (nil? (tc/find-button-at (typed fresh "Mea")
+                                   (inc start)
+                                   (+ tc/help-row0 4))))))
+
+(t/deftest search-13-flash-uses-first-word
+  ;; flash-for-action looks at the command word, not the whole input.
+  (t/is (= "map" (tc/flash-for-action (typed fresh "map + 4") "enter")))
+  (t/is (= "Mod" (tc/flash-for-action (typed fresh "Mod 3") "enter"))))
+
+(t/deftest search-14-view-renders-search-row
+  ;; A nil-action label ("+8") must not be mistaken for the flashing
+  ;; button when no flash is running (that crashed view).
+  (let [out (tc/view (typed fresh "Mea"))]
+    (t/is (clojure.string/includes? out "[MeanDeviation]"))
+    (t/is (clojure.string/includes? out "+8"))))
 
 ;; ---------------------------------------------------------------
 ;; Run

@@ -546,8 +546,14 @@
 (def wolfram-fn (atom nil))
 
 ;; Wolfram number text: 2.5 -> "2.5", 1.0E10 -> "1.0*^10", 3 -> "3.0"
+;; Whole numbers go as integers so Wolfram computes exactly:
+;; Fibonacci[10.] is a float formula (55.000000000000014),
+;; Fibonacci[10] is 55. Below 1e15 a double holds an integer exactly.
 (defn wl-num [d]
-  (str/replace (str (double d)) "E" "*^"))
+  (let [d (double d)]
+    (if (and (== d (Math/rint d)) (< (Math/abs d) 1e15))
+      (str (long d))
+      (str/replace (str d) "E" "*^"))))
 
 ;; Build tcReply[tcCall["Name", {v1, v2, ...}]]
 (defn wolfram-call-line [name stack]
@@ -627,19 +633,116 @@
 (defn menu-fn? [name]
   (some? (menu-folder-of name)))
 
+;; All documented Wolfram function names, one per line, for search.
+;; The path is computed at load time: *file* is unbound by the time
+;; a delay runs. Regenerate from the engine with
+;; Sort@Select[CanonicalName /@ WolframLanguageData[], StringQ[#] &&
+;;   StringMatchQ[#, RegularExpression["[A-Z][A-Za-z0-9]*"]] &]
+(def wolfram-names-path (str (fs/parent wl-path) "/wolfram-names.txt"))
+
+;; Read lazily; a missing file just means no search results.
+(def wolfram-names
+  (delay
+    (try
+      (into [] (remove str/blank? (str/split-lines (slurp wolfram-names-path))))
+      (catch Exception _
+        []))))
+
+(def wolfram-name-set (delay (set @wolfram-names)))
+
+;; Extract trimmed input text from state, or "" when :input is nil.
+(defn input-text [state]
+  (if-let [inp (:input state)]
+    (str/trim (text-input/value inp))
+    ""))
+
+;; Return the input text when it is a single Capitalized word
+;; and :pending is nil; otherwise nil.
+(defn search-prefix [state]
+  (when (and (nil? (:pending state))
+             (:input state))
+    (let [txt (input-text state)]
+      (when (re-matches #"[A-Z][A-Za-z0-9]*" txt)
+        txt))))
+
+;; Return names starting with prefix (case-sensitive).
+;; Order: menu functions first (in menu order), then other matches sorted by length, then alphabetically.
+(defn search-matches [prefix]
+  (let [all-names @wolfram-names
+        menu-fns (into #{} (mapcat second wolfram-menu))
+        ;; Filter names starting with prefix
+        matches (filter #(str/starts-with? % prefix) all-names)
+        ;; Split into menu and non-menu
+        menu-matches (into #{} (filter menu-fns matches))
+        other-matches (remove menu-fns matches)
+        ;; Sort other matches by length, then alphabetically
+        sorted-other (sort-by (juxt count str) other-matches)
+        ;; Preserve menu order
+        ordered-menu (filter #(contains? menu-matches %)
+                             (mapcat second wolfram-menu))]
+    (vec (concat ordered-menu sorted-other))))
+
+;; Return name itself if in wolfram-names or a menu function;
+;; else first match from search-matches; else name unchanged.
+(defn search-pick [name]
+  (let [menu-fns (into #{} (mapcat second wolfram-menu))]
+    (if (or (contains? menu-fns name) (contains? @wolfram-name-set name))
+      name
+      (if-let [first-match (first (search-matches name))]
+        first-match
+        name))))
+
+;; Render the 4th row for a search prefix.
+;; Returns [action display] pairs fitting within 70 chars.
+(defn search-row [prefix]
+  (let [matches (search-matches prefix)
+        max-len 70
+        ;; Build row incrementally, checking if +N would fit
+        build-row (fn []
+                    (loop [idx 0
+                           acc []
+                           line-len 0]
+                      (if (= idx (count matches))
+                        [acc line-len]
+                        (let [name (nth matches idx)
+                              display (str "[" name "]")
+                              action (str "run:" name)
+                              item-len (+ (count display) (if (empty? acc) 0 2))
+                              new-len (+ line-len item-len)
+                              remaining (- (count matches) (inc idx))
+                              ;; If we add this item, would +remaining fit?
+                              plus-str (if (pos? remaining) (str "+" remaining) "")
+                              plus-len (if (pos? remaining) (+ 2 (count plus-str)) 0)
+                              total-with-plus (+ new-len plus-len)]
+                          (if (<= total-with-plus max-len)
+                            (recur (inc idx) (conj acc [action display]) new-len)
+                            ;; Can't fit this item; return current acc
+                            [acc line-len])))))]
+    (if (empty? matches)
+      [[nil "(no Wolfram match)"]]
+      (let [[acc line-len] (build-row)
+            remaining (- (count matches) (count acc))]
+        (if (pos? remaining)
+          (conj acc [nil (str "+" remaining)])
+          acc)))))
+
 ;; Return the 4th row as [action display] pairs.
-;; - If (:menu state) is nil: show folder buttons.
+;; - If search-prefix is non-nil: return search-row (type-to-filter).
 ;; - If (:menu state) is a folder name: show back button + functions.
+;; - Otherwise: show folder buttons (top level).
 (defn menu-row [state]
-  (if-let [folder (:menu state)]
-    ;; Inside a folder: back button first, then function buttons.
-    (into [["menu:back" "[◂ back]"]]
-          (map (fn [f] [f (str "[" f "]")])
-               (second (first (filter #(= folder (first %)) wolfram-menu)))))
-    ;; Top level: one button per folder.
-    (map (fn [[folder _]]
-           [(str "menu:" folder) (str "[" folder " ▸]")])
-         wolfram-menu)))
+  (if-let [prefix (search-prefix state)]
+    ;; Type-to-filter search mode
+    (search-row prefix)
+    (if-let [folder (:menu state)]
+      ;; Inside a folder: back button first, then function buttons.
+      (into [["menu:back" "[◂ back]"]]
+            (map (fn [f] [f (str "[" f "]")])
+                 (second (first (filter #(= folder (first %)) wolfram-menu)))))
+      ;; Top level: one button per folder.
+      (map (fn [[folder _]]
+             [(str "menu:" folder) (str "[" folder " ▸]")])
+           wolfram-menu))))
 
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
@@ -886,7 +989,7 @@
       (if-let [n (parse-number token)]
         [(update state :stack conj n) nil]
         (if (re-matches #"[A-Z][A-Za-z0-9]*" raw)
-          (wolfram-op state raw)
+          (wolfram-op state (search-pick raw))
           [(assoc state
                   :status (str "Unknown: " raw))
            nil])))))
@@ -998,29 +1101,42 @@
     (if (re-matches #"menu:.*" action)
       ;; Folder navigation: extract folder name from "menu:<Folder>"
       [(assoc state :menu (subs action 5)) nil]
-      (if (menu-fn? action)
-        ;; Wolfram function: run via Wolfram Engine
-        (wolfram-op state action)
-        (case action
-          "CHS"     [(chs state) nil]
-          "INV"     [(inv state) nil]
-          "pi"      [(push-pi state) nil]
-          "clear"   [(assoc state :stack []) nil]
-          "drop"    [(pop-top state) nil]
-          "swap"    [(swap-xy state) nil]
-          "peek"    [(peek-top state) nil]
-          "count"   [(count-stack state) nil]
-          "reverse" [(reverse-stack state) nil]
-          "get"     [(start-level-prompt state "get" "get? ") nil]
-          "map"     [(start-map-reduce-prompt state "map" "map? "
-                                              "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
-          "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
-                                              "[start] op: +, *, /, 10 + (sum+10)") nil]
-          "linreg"  (linreg-action state)
-          "undo"    [(undo state) nil]
-          "q"       [state program/quit-cmd]
-          "enter"   (submit state)
-          [(execute-op state action) nil])))))
+      (if (re-matches #"run:.*" action)
+        ;; Search result: clear input and run Wolfram op
+        (let [name (subs action 4)
+              state' (-> state
+                         (update :input (fn [inp]
+                                          (-> inp
+                                              text-input/reset
+                                              (assoc :prompt input-prompt)
+                                              (assoc :placeholder input-placeholder))))
+                         (assoc :status nil
+                                :info nil
+                                :pending nil))]
+          (wolfram-op state' name))
+        (if (menu-fn? action)
+          ;; Wolfram function: run via Wolfram Engine
+          (wolfram-op state action)
+          (case action
+            "CHS"     [(chs state) nil]
+            "INV"     [(inv state) nil]
+            "pi"      [(push-pi state) nil]
+            "clear"   [(assoc state :stack []) nil]
+            "drop"    [(pop-top state) nil]
+            "swap"    [(swap-xy state) nil]
+            "peek"    [(peek-top state) nil]
+            "count"   [(count-stack state) nil]
+            "reverse" [(reverse-stack state) nil]
+            "get"     [(start-level-prompt state "get" "get? ") nil]
+            "map"     [(start-map-reduce-prompt state "map" "map? "
+                                                "[n] op: 4 +, 2 *, 2 /, + (by X), chs, inv") nil]
+            "reduce"  [(start-map-reduce-prompt state "reduce" "reduce? "
+                                                "[start] op: +, *, /, 10 + (sum+10)") nil]
+            "linreg"  (linreg-action state)
+            "undo"    [(undo state) nil]
+            "q"       [state program/quit-cmd]
+            "enter"   (submit state)
+            [(execute-op state action) nil]))))))
 
 ;; Ctrl-key shortcuts (no ctrl conflicts with the text input's own
 ;; bindings -- it uses ctrl a b d e f h k u w). Values are actions, so
@@ -1079,15 +1195,25 @@
 ;; Must be called with the PRE-action state, since submit clears the
 ;; input.
 (defn flash-for-action [state action]
-  (if (= action "enter")
-    (let [head (str/lower-case
-                (first (str/split
-                        (str/trim (text-input/value (:input state)))
-                        #"\s+")))]
-      (if (and (:pending state) (parse-integer head))
+  (cond
+    (= action "enter")
+    (let [head (first (str/split
+                       (str/trim (text-input/value (:input state)))
+                       #"\s+"))]
+      (cond
+        (and (:pending state) (parse-integer head))
         "get"
-        (or (button-for-token head)
+        ;; Capitalized word: the function ENTER will run (as typed).
+        (and (not (:pending state))
+             (re-matches #"[A-Z][A-Za-z0-9]*" head))
+        (search-pick head)
+        :else
+        (or (button-for-token (str/lower-case head))
             "enter")))
+    (re-matches #"run:.*" action)
+    ;; Extract name from "run:<Name>"
+    (subs action 4)
+    :else
     action))
 
 (defn handle-click [state x y]
@@ -1275,7 +1401,9 @@
   (str/join "  "
             (map (fn [[action display]]
                    (style/render
-                    (if (= (:action flash) action)
+                    ;; `action` can be nil (labels like "+8"); with no
+                    ;; flash running, (:action flash) is nil too.
+                    (if (and action (= (:action flash) action))
                       (style/style
                        :fg (flash-color (:frame flash))
                        :bold true)
