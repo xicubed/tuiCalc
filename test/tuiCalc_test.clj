@@ -654,29 +654,6 @@
   ;; Pi still pushes Math/PI
   (t/is (= [Math/PI] (submit->stack "Pi"))))
 
-(t/deftest wolfram-button-and-help
-  (t/is (= "Sqrt" (tc/button-for-token "sqrt")))
-  (t/is (= "Total" (tc/button-for-token "total")))
-  ;; 4th help row contains all 8 labels
-  (let [row (nth (tc/help-lines) 3)]  ; 0-indexed, so row 3 = 4th row
-    (t/is (clojure.string/includes? row "[Sqrt]"))
-    (t/is (clojure.string/includes? row "[Mod]"))
-    (t/is (clojure.string/includes? row "[Total]"))
-    (t/is (clojure.string/includes? row "[Mean]"))
-    (t/is (clojure.string/includes? row "[Sort]"))
-    (t/is (clojure.string/includes? row "[Max]"))
-    (t/is (clojure.string/includes? row "[Min]"))
-    (t/is (clojure.string/includes? row "[ListPlot]"))))
-
-(t/deftest click-wolfram-total-button
-  (let [line (nth (tc/help-lines) 3)  ; 4th row
-        start (.indexOf line "[Total]")
-        y (+ tc/help-row0 4)]
-    (t/is (<= 0 start))
-    (t/is (= "Total" (tc/find-button-at (inc start) y)))
-    (t/is (= "Total" (tc/find-button-at (+ start 6) y)))
-    (t/is (not= "Total" (tc/find-button-at (+ start 8) y)))))
-
 ;; ---------------------------------------------------------------
 ;; sig6 — 6-significant-digit formatting
 ;; ---------------------------------------------------------------
@@ -988,6 +965,136 @@
     (t/is (clojure.string/includes? html "<meta charset=\"utf-8\">"))
     (t/is (clojure.string/includes? html "ui-monospace"))
     (t/is (clojure.string/includes? html "Total[{1, 2}] = 3"))))
+
+;; ---------------------------------------------------------------
+;; Wolfram menu folders (spec-menus-r1.md)
+;; ---------------------------------------------------------------
+
+;; Test 1: top-level menu row shows folder buttons
+(t/deftest menu-01-top-level-row
+  (t/is (= [["menu:Math" "[Math ▸]"]
+            ["menu:Stats" "[Stats ▸]"]
+            ["menu:Lists" "[Lists ▸]"]
+            ["menu:Plots" "[Plots ▸]"]]
+           (tc/menu-row {}))))
+
+;; Test 2: folder view shows back button plus functions
+(t/deftest menu-02-folder-row
+  (t/is (= [["menu:back" "[◂ back]"]
+            ["Total" "[Total]"]
+            ["Mean" "[Mean]"]
+            ["Median" "[Median]"]
+            ["StandardDeviation" "[StandardDeviation]"]
+            ["Variance" "[Variance]"]]
+           (tc/menu-row {:menu "Stats"}))))
+
+;; Test 3: run-action for menu:folder sets :menu
+(t/deftest menu-03-run-action-sets-menu
+  (let [[new-state cmd] (tc/run-action fresh "menu:Stats")]
+    (t/is (= "Stats" (:menu new-state)))
+    (t/is (= [] (:stack new-state)))
+    (t/is (nil? cmd))))
+
+;; Test 4: run-action for menu:back clears :menu
+(t/deftest menu-04-run-action-back
+  (let [[new-state cmd] (tc/run-action (assoc fresh :menu "Stats") "menu:back")]
+    (t/is (nil? (:menu new-state)))
+    (t/is (nil? cmd))))
+
+;; Test 5: help-lines has 4 rows, 4th row shows folders or functions
+(t/deftest menu-05-help-lines-count-and-content
+  (t/is (= "[Math ▸]  [Stats ▸]  [Lists ▸]  [Plots ▸]"
+           (nth (tc/help-lines) 3)))
+  (t/is (= 4 (count (tc/help-lines))))
+  (t/is (= 4 (count (tc/help-lines {:menu "Plots"})))))
+
+;; Test 6: find-button-at works in folder view, 2-arity defaults to top level
+(t/deftest menu-06-find-button-at-in-folder
+  (let [st {:menu "Stats"}
+        line (nth (tc/help-lines st) 3)
+        start (.indexOf line "[Mean]")
+        y (+ tc/help-row0 4)]
+    (t/is (<= 0 start))
+    (t/is (= "Mean" (tc/find-button-at st (inc start) y)))
+    (t/is (= "Mean" (tc/find-button-at st (+ start 6) y)))
+    (t/is (not= "Mean" (tc/find-button-at (inc start) y)))))
+
+;; Test 7: clicking a folder button opens that folder
+(t/deftest menu-07-click-folder-button
+  (let [st fresh
+        start (.indexOf (nth (tc/help-lines) 3) "[Stats ▸]")
+        y (+ tc/help-row0 4)]
+    (t/is (<= 0 start))
+    (let [[new-state _] (tc/handle-click st (inc start) y)]
+      (t/is (= "Stats" (:menu new-state))))))
+
+;; Test 8: button-for-token looks up menu functions
+(t/deftest menu-08-button-for-token-menu
+  (t/is (= "Median" (tc/button-for-token "median")))
+  (t/is (= "Sqrt" (tc/button-for-token "sqrt")))
+  (t/is (= "ListPlot" (tc/button-for-token "listplot")))
+  (t/is (= "Factorial" (tc/button-for-token "factorial")))
+  (t/is (nil? (tc/button-for-token "plot3d")))
+  (t/is (= "drop" (tc/button-for-token "drop"))))
+
+;; Test 9: menu-folder-of finds the folder for a function
+(t/deftest menu-09-menu-folder-of
+  (t/is (= "Stats" (tc/menu-folder-of "Mean")))
+  (t/is (= "Math" (tc/menu-folder-of "Sqrt")))
+  (t/is (= "Plots" (tc/menu-folder-of "Histogram")))
+  (t/is (nil? (tc/menu-folder-of "Plot3D"))))
+
+;; Test 10: with-flash sets :menu for menu functions
+(t/deftest menu-10-with-flash
+  (t/is (= "Stats" (:menu (tc/with-flash fresh "Median"))))
+  (t/is (= "Plots" (:menu (tc/with-flash (assoc fresh :menu "Plots") "drop")))))
+
+;; Test 11: folder rows fit screen share (<=70 chars)
+(t/deftest menu-11-folder-row-length
+  (doseq [[folder-name _] tc/wolfram-menu]
+    (let [row (nth (tc/help-lines {:menu folder-name}) 3)]
+      (t/is (<= (count row) 70) (str "Folder " folder-name " row too long: " (count row) " chars")))))
+
+;; Update test 12a: wolfram-button-and-help uses folder view
+(t/deftest wolfram-button-and-help
+  (t/is (= "Sqrt" (tc/button-for-token "sqrt")))
+  (t/is (= "Total" (tc/button-for-token "total")))
+  ;; Look up labels in their folder's row
+  (let [math-row (nth (tc/help-lines {:menu "Math"}) 3)
+        stats-row (nth (tc/help-lines {:menu "Stats"}) 3)
+        lists-row (nth (tc/help-lines {:menu "Lists"}) 3)
+        plots-row (nth (tc/help-lines {:menu "Plots"}) 3)]
+    (t/is (clojure.string/includes? math-row "[Sqrt]"))
+    (t/is (clojure.string/includes? math-row "[Mod]"))
+    (t/is (clojure.string/includes? stats-row "[Total]"))
+    (t/is (clojure.string/includes? stats-row "[Mean]"))
+    (t/is (clojure.string/includes? lists-row "[Sort]"))
+    (t/is (clojure.string/includes? lists-row "[Max]"))
+    (t/is (clojure.string/includes? lists-row "[Min]"))
+    (t/is (clojure.string/includes? plots-row "[ListPlot]"))))
+
+;; Update test 12b: click-wolfram-total-button uses 3-arity with :menu
+(t/deftest click-wolfram-total-button
+  (let [st {:menu "Stats"}
+        line (nth (tc/help-lines st) 3)
+        start (.indexOf line "[Total]")
+        y (+ tc/help-row0 4)]
+    (t/is (<= 0 start))
+    (t/is (= "Total" (tc/find-button-at st (inc start) y)))
+    (t/is (= "Total" (tc/find-button-at st (+ start 6) y)))
+    (t/is (not= "Total" (tc/find-button-at st (+ start 8) y)))))
+
+;; handle-click must hit-test the rows on screen, not the top level:
+;; [◂ back] sits where [Math ▸] is at the top level.
+(t/deftest menu-12-click-back-inside-folder
+  (let [st    (assoc fresh :menu "Stats")
+        start (.indexOf (nth (tc/help-lines st) 3) "[◂ back]")
+        [s _] (tc/handle-click st (inc start) (+ tc/help-row0 4))]
+    (t/is (= 0 start))
+    (t/is (nil? (:menu s)))))
+
+(t/deftest pow-token-flashes-power-button
+  (t/is (= "^" (tc/button-for-token "pow"))))
 
 ;; ---------------------------------------------------------------
 ;; Run
