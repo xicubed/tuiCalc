@@ -116,7 +116,17 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   `PolyhedronData["RhombicHexecontahedron"]`) should get the blueline 3D
   look of `docs/spikey/` by default: faces hand-shaded ink -> grid blue ->
   paper by angle to a light, ambient-only Lighting, ink edges, transparent
-  background (the user's favourite render, 2026-11-03). **`fn`** (user's pick: Clojure name, can't
+  background (the user's favourite render, 2026-11-03). How to get there:
+  (1) the recipe in `docs/spikey/spikey.wl` (`shade`) becomes a
+  `tcBlueline3D[g]` in `src/tuiCalc.wl` that `tcCall` applies to any
+  Graphics3D result. It shades polygon faces, which fits polyhedra. A
+  smooth `Plot3D` surface has no faces to shade, so it needs a
+  normal-based `ColorFunction` in the same ink -> paper blend. Check it
+  on a real surface. (2) Graphics3D exports as a transparent PNG, the way
+  spikey.png did, not as SVG. (3) Today's protocol only sends numbers, so
+  `PolyhedronData["Icosahedron"]` needs phase 2's expression input
+  (bracket input, string arguments). Still on offer: a rotatable
+  version of the drawing (not started). **`fn`** (user's pick: Clojure name, can't
   clash with Capitalized Wolfram) turns the X expression into a function of
   its free variable, `x ↦ (x+1)^2` (= Wolfram Function[x, ...]) kept on the
   stack: apply it to a number, `map` it over the stack, Plot/D/Integrate it.
@@ -259,6 +269,20 @@ Quirks seen so far:
   bogs down on tangled multi-bug rounds (the map/reduce fix round took ~55 min).
 - `herdr agent read` can't scroll far while an agent is working (alternate
   screen). For long output, have the agent write a file and reply with its path.
+- Learned on the crew-up setup (other machine, 2026-10-31), brought back here:
+  - **The index is Monet's.** Crew never stage or commit, not even
+    `git add -N`. For a new file's stat they use
+    `git diff --no-index --stat /dev/null <file>`. Decline `git add` and
+    whole-disk searches (`find /`) when a pane asks for permission. Say why
+    in the same prompt so it doesn't come back.
+  - **Run the test gate unpiped before committing.** `bb test | tail -1 && git commit`
+    commits even when tests fail, because the pipe's exit status comes from
+    `tail`. Use `bb test > log && git commit`.
+  - **Specs number their test cases** with hand-worked expected values;
+    M. Testeur names each test after its case. A builder who thinks a test
+    contradicts the spec says so in the reply and leaves the test alone.
+  - **Note Monet's own mid-round edits** (a hand fix, a CLAUDE.md change)
+    when handing the diff to M. Critique, or it flags them as out of scope.
 
 ## Gotchas (detail in TESTING.md)
 
