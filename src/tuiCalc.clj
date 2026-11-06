@@ -573,7 +573,11 @@
 ;; as our reply, so look for the marker anywhere in the line.
 (defn start-wolfram [wl-path]
   (try
-    (let [p    (process/process ["wolframscript"] {:err :discard})
+    (let [p    (process/process ["wolframscript"]
+                                {;; stderr too: why an engine won't start
+                                 ;; (license, activation) is printed there.
+                                 ;; send-line skips non-TC lines anyway.
+                                 :err :out})
           w    (io/writer (:in p))
           r    (io/reader (:out p))
           lock (Object.)
@@ -589,24 +593,55 @@
                                          (subs l i)
                                          (recur))))
                                    (catch Exception _ nil)))
-                              20000 nil)))]
-      (send-line (str "Get[\"" wl-path "\"]; Print[\"TC\\tREADY\"]"))
-      ;; Warm up graphics now: the first plot otherwise takes ~10 s.
-      (send-line "tcReply[tcCall[\"ListPlot\", {1., 2.}]]")
-      send-line)
+                              20000 nil)))
+          ;; Handshake. An engine that can't run (not activated, license
+          ;; limit, kernel not configured) prints why and exits, or never
+          ;; answers. Keep the last line it printed so the user sees the
+          ;; reason, e.g. "... license error: single machine process
+          ;; limit reached." (a second tuiCalc already holds the kernel).
+          last-line (atom nil)
+          ready? (deref (future
+                          (try
+                            (.write w (str "Get[\"" wl-path "\"]; Print[\"TC\\tREADY\"]\n"))
+                            (.flush w)
+                            (loop []
+                              (if-let [l (.readLine r)]
+                                (if (str/includes? l "TC\tREADY")
+                                  true
+                                  (do (when-not (str/blank? l) (reset! last-line (str/trim l)))
+                                      (recur)))
+                                false))
+                            (catch Exception _ false)))
+                        20000 false)]
+      (if ready?
+        (do
+          ;; Warm up graphics now: the first plot otherwise takes ~10 s.
+          (send-line "tcReply[tcCall[\"ListPlot\", {1., 2.}]]")
+          send-line)
+        (do (process/destroy-tree p)
+            {:error (or @last-line "no answer (try: wolframscript -configure)")})))
     (catch Exception _ nil)))
 
 ;; The fn kept in state as :wolfram. Never blocks while the engine is
-;; still starting (engine = a future of start-wolfram's result).
+;; still starting (engine = a future of start-wolfram's result, which is
+;; the send fn, {:error msg} when the engine refused to start, or nil).
 (defn wolfram-sender [engine]
   (fn [line]
     (cond
       (not (realized? engine)) "TC\tERR\tWolfram is starting, try again in a moment"
-      (nil? @engine)           "TC\tERR\tWolfram Engine failed to start"
+      (map? @engine)           (str "TC\tERR\tWolfram Engine failed to start: " (:error @engine))
+      (nil? @engine)           "TC\tERR\tWolfram Engine failed to start (try: wolframscript -configure)"
       :else (or (@engine line) "TC\tERR\tWolfram timed out"))))
 
 ;; Set by -main when wolframscript is installed; init copies it into state.
 (def wolfram-fn (atom nil))
+
+;; Set by -main when wolframscript isn't installed: init then hides the
+;; Wolfram row and search and shows a launch notice. (Tests leave it
+;; false, so they see the full row whether or not an engine exists.)
+(def engine-missing (atom false))
+(def no-engine-notice
+  "No Wolfram Engine: native math only (see README)")
 
 ;; Wolfram number text: 2.5 -> "2.5", 1.0E10 -> "1.0*^10", 3 -> "3.0"
 ;; Whole numbers go as integers so Wolfram computes exactly:
@@ -757,6 +792,7 @@
 ;; and :pending is nil; otherwise nil.
 (defn search-prefix [state]
   (when (and (nil? (:pending state))
+             (not (:no-engine state))
              (:input state))
     (let [txt (input-text state)]
       (when (re-matches #"[A-Z][A-Za-z0-9]*" txt)
@@ -828,18 +864,26 @@
 ;; - If (:menu state) is a folder name: show back button + functions.
 ;; - Otherwise: show folder buttons (top level).
 (defn menu-row [state]
-  (if-let [prefix (search-prefix state)]
+  (cond
+    ;; No engine installed: one plain label instead of dead buttons.
+    (:no-engine state)
+    [[nil "Wolfram functions: not installed (see README)"]]
+
     ;; Type-to-filter search mode
-    (search-row prefix)
-    (if-let [folder (:menu state)]
-      ;; Inside a folder: back button first, then function buttons.
-      (into [["menu:back" "[◂ back]"]]
-            (map (fn [f] [f (str "[" f "]")])
-                 (second (first (filter #(= folder (first %)) wolfram-menu)))))
-      ;; Top level: one button per folder.
-      (map (fn [[folder _]]
-             [(str "menu:" folder) (str "[" folder " ▸]")])
-           wolfram-menu))))
+    (search-prefix state)
+    (search-row (search-prefix state))
+
+    ;; Inside a folder: back button first, then function buttons.
+    (:menu state)
+    (into [["menu:back" "[◂ back]"]]
+          (map (fn [f] [f (str "[" f "]")])
+               (second (first (filter #(= (:menu state) (first %)) wolfram-menu)))))
+
+    ;; Top level: one button per folder.
+    :else
+    (map (fn [[folder _]]
+           [(str "menu:" folder) (str "[" folder " ▸]")])
+         wolfram-menu)))
 
 ;; Start a two-step map/reduce prompt.
 (defn start-map-reduce-prompt [state pending prompt-str placeholder]
@@ -1348,10 +1392,11 @@
              :focused true
              :width 30)
     :status  nil
-    :info    nil
+    :info    (when @engine-missing no-engine-notice)
     :pending nil
     :undo    []
     :menu    nil
+    :no-engine @engine-missing
     :wolfram @wolfram-fn}
    nil])
 
@@ -1605,8 +1650,9 @@
 
 (defn -main [& _]
   (clear-on-resize!)
-  (when-let [wl (fs/which "wolframscript")]
-    (reset! wolfram-fn (wolfram-sender (future (start-wolfram wl-path)))))
+  (if (fs/which "wolframscript")
+    (reset! wolfram-fn (wolfram-sender (future (start-wolfram wl-path))))
+    (reset! engine-missing true))
   (program/run
    {:init init
     :update update-fn

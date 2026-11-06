@@ -1385,6 +1385,37 @@
     (t/is (= "Plot[(1 + x)^2, {x, -5, 3}]" (:info s)))
     (t/is (some? cmd))))
 
+(t/deftest no-engine-row-search-and-notice
+  ;; Without wolframscript, init shows a launch notice and the Wolfram
+  ;; row becomes one unclickable label; search is off.
+  (reset! tc/engine-missing true)
+  (try
+    (let [st (first (tc/init))]
+      (t/is (= tc/no-engine-notice (:info st)))
+      (t/is (true? (:no-engine st)))
+      (t/is (= [[nil "Wolfram functions: not installed (see README)"]]
+               (tc/menu-row st)))
+      (t/is (= (tc/menu-row st) (tc/menu-row (typed st "Mea"))))
+      (t/is (nil? (tc/search-prefix (typed st "Mea"))))
+      ;; renders (nil-action label) and nothing on that row is clickable
+      (t/is (clojure.string/includes? (tc/view st) "not installed"))
+      (t/is (nil? (tc/find-button-at st 3 (+ tc/help-row0 4)))))
+    (finally (reset! tc/engine-missing false)))
+  ;; With the default (false) nothing changes.
+  (t/is (nil? (:info (first (tc/init)))))
+  (t/is (= "[Math ▸]  [Stats ▸]  [Lists ▸]  [Plots ▸]" (nth (tc/help-lines) 3))))
+
+(t/deftest engine-failed-to-start-message
+  (let [engine (future nil)]
+    @engine
+    (t/is (= "TC\tERR\tWolfram Engine failed to start (try: wolframscript -configure)"
+             ((tc/wolfram-sender engine) "anything"))))
+  ;; The engine's own reason is passed through (e.g. the license limit).
+  (let [engine (future {:error "license error: single machine process limit reached."})]
+    @engine
+    (t/is (= "TC\tERR\tWolfram Engine failed to start: license error: single machine process limit reached."
+             ((tc/wolfram-sender engine) "anything")))))
+
 ;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------

@@ -27,8 +27,47 @@ bb ./src/tuiCalc.clj
 
 (or `bb -m tuiCalc`)
 
-The TUI renders a stack box, a `> ` input line, and two rows of clickable
+The TUI renders a stack box, a `> ` input line, and four rows of clickable
 buttons.
+
+## Wolfram Engine (optional)
+
+tuiCalc works fully without it as an RPN calculator (native math, stack ops,
+map/reduce, linear regression and its plot). The Wolfram button row then
+says the engine isn't installed, and a note on launch says so.
+
+With the free [Wolfram Engine](https://www.wolfram.com/engine/) installed,
+the 4th button row has folders `[Math ▸]` `[Stats ▸]` `[Lists ▸]`
+`[Plots ▸]`. Typing a Capitalized word searches ~6,500 Wolfram functions
+(`Mea` -> Mean, MeanShift, ...), and Enter runs the best match. Capitalized
+= Wolfram, lowercase = Clojure. `'x` pushes the symbol x; arithmetic on
+symbols is done by Wolfram, so `'x 1 + 2 y^x` -> `(1 + x)^2`.
+`expr 'x [xmin xmax] Plot` plots in the browser (same blueline style as the
+lr plot).
+
+Setup (macOS):
+
+1. Get the free Wolfram Engine: https://www.wolfram.com/engine/ (needs a
+   free Wolfram ID; it installs `wolframscript`).
+2. Activate it once: run `wolframscript` and sign in with the Wolfram ID
+   when asked.
+3. If tuiCalc reports "Wolfram Engine failed to start: no answer", point
+   wolframscript at the kernel: `wolframscript -configure` (for example
+   if you installed the engine in ~/Applications). If it reports a
+   "license error: single machine process limit reached", another
+   tuiCalc or Wolfram session is using the engine: the free engine runs
+   only a limited number of kernels at once, so close the other one.
+4. Check: `wolframscript -code '1+1'` prints 2 (the first run takes a few
+   seconds).
+5. Plots use the Architects Daughter font; the kernel draws the text, so
+   install it for the kernel:
+   `~/Library/Fonts/ArchitectsDaughter-Regular.ttf` from
+   https://github.com/google/fonts (`ofl/architectsdaughter`). Without it,
+   plots fall back to a plain sans font.
+
+How it runs: tuiCalc starts one long-lived `wolframscript` process in the
+background at launch (a few seconds; calls before it's ready say "Wolfram
+is starting, try again in a moment"); after that calls take milliseconds.
 
 ## Using it
 

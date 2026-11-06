@@ -146,6 +146,18 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   small override table: Power 2 (HP y^x), BinomialCoefficient 2, D 2,
   Max/Min whole stack. Style plots with SetOptions at kernel start: passing
   options inline fails for HoldAll functions like Plot.
+- **No engine / engine won't start (2026-11-05).** No `wolframscript` on
+  PATH: `engine-missing` -> init shows `no-engine-notice` on the info
+  line, the 4th row is one label "Wolfram functions: not installed (see
+  README)", search is off. Installed but won't run: `start-wolfram`
+  handshakes (waits up to 20 s for `TC\tREADY`, stderr merged into
+  stdout) and keeps the engine's last line, so the user sees e.g.
+  "Wolfram Engine failed to start: ... license error: single machine
+  process limit reached." **Gotcha:** this Mac's engine license allows
+  very few kernels at once: a running tuiCalc plus the Wolfram MCP
+  kernel used them all (2026-11-05), so a second tuiCalc (or a test
+  run of `start-wolfram` from Monet's shell) can't start one. README
+  has the setup steps.
 - **Phase 2 status (2026-11-05): round 1 built.** A stack item is a
   number or `(expr "text")` = `{:wl "text"}` (Wolfram InputForm).
   `'x` pushes a symbol (`parse-value`); `+ - * / y^x` CHS INV on an
