@@ -3,6 +3,7 @@
    line per call:
 
      tcReply[tcCall["Total", {1., 2., 3., 4.}]]
+     tcReply[tcApply["Plus", {(x), 1}]]
 
    and reads back ONE line that starts with "TC\t" (the kernel puts its
    In[n]:= prompt in front of it on the same line, so look for the marker
@@ -10,13 +11,14 @@
 
      TC  OK   <k>  NUM   <number>              <info>
      TC  OK   <k>  LIST  <num> <num> ...       <info>   (zero or more)
-     TC  OK   0    SYM   <InputForm text>      <info>
+     TC  OK   <k>  SYM   <InputForm text>      <info>   (k = args consumed)
      TC  OK   0    GFX   <path to .svg>        <info>
      TC  ERR  <message>
 
    k = how many values were taken from the top of the stack; tuiCalc
-   replaces them with the NUM/LIST values. SYM and GFX leave the stack
-   alone. Numbers are in CForm, which Clojure's parse-double reads
+   replaces them with the NUM/LIST values. GFX leaves the stack alone.
+   SYM now reports the real k (args consumed) instead of always 0.
+   Numbers are in CForm, which Clojure's parse-double reads
    ("3.", "1.4142135623730951", "1.e10", "-2.5e-7"). *)
 
 (* One reply = one line: never wrap long output. *)
@@ -92,13 +94,45 @@ tcExportSVG[path_String, g_] := (
     "stroke:rgb(50%,50%,50%);stroke-opacity:0.4" ->
       "stroke:rgb(49.8%,65.1%,83.9%);stroke-opacity:0.8"], "Text"])
 
+(* Classify result and build reply: NUM/LIST/SYM/GFX/ERR. *)
+tcResult[shown_, res_, k_] := Which[
+  res === $Failed || res === $Aborted,
+    {"ERR", shown <> " failed"},
+  tcGraphicsQ[res],
+    With[{path = FileNameJoin[{$TemporaryDirectory, "tuiCalc-wolfram.svg"}]},
+      tcExportSVG[path, res];
+      {"OK", 0, "GFX", path, shown}],
+  tcRealQ[res],
+    {"OK", k, "NUM", tcNum[res], shown <> " = " <> tcShow[res]},
+  VectorQ[res, tcRealQ],
+    {"OK", k, "LIST", StringRiffle[tcNum /@ res, " "],
+      shown <> " = " <> tcShow[res]},
+  True,
+    {"OK", k, "SYM", tcShow[res], shown <> " = " <> tcShow[res]}]
+
+(* Plot of an expression, RPN style: the range comes off the stack.
+     ... expr  'x  xmin  xmax  Plot  ->  Plot[expr, {x, xmin, xmax}]
+     ... expr  'x  Plot              ->  Plot[expr, {x, -10, 10}]
+   Returns {k, args}, or None when the stack doesn't fit (tcCall then
+   says what Plot needs). A variable is a Symbol that isn't a numeric constant like Pi. *)
+tcVarQ[s_] := Head[s] === Symbol && ! NumericQ[s]
+tcPlotArgs[stack_List] := With[{n = Length[stack]}, Which[
+  n >= 4 && tcVarQ[stack[[-3]]] && tcRealQ[stack[[-2]]] && tcRealQ[stack[[-1]]],
+    {4, {stack[[-4]], {stack[[-3]], stack[[-2]], stack[[-1]]}}},
+  n >= 2 && tcVarQ[stack[[-1]]],
+    {2, {stack[[-2]], {stack[[-1]], -10, 10}}},
+  True, None]]
+
 tcCall[name_String, stack_List] := Catch[Module[
-  {k, f, args, res, n = Length[stack], shown},
+  {k, f, args, res, n = Length[stack], shown, p},
   If[! tcKnownQ[name], Throw[{"ERR", "Unknown: " <> name}]];
-  If[! VectorQ[stack, tcRealQ], Throw[{"ERR", "Stack must be numbers"}]];
   k = tcArity[name];
   f = Symbol[name];
   Which[
+    name === "Plot",
+      p = tcPlotArgs[stack];
+      If[p === None, Throw[{"ERR", "Plot needs: expr 'x [xmin xmax]"}]];
+      {k, args} = p,
     k === 0, args = {}; k = 0,
     k === All,
       If[n == 0, Throw[{"ERR", "Stack empty"}]];
@@ -109,20 +143,15 @@ tcCall[name_String, stack_List] := Catch[Module[
     name <> "[" <> StringRiffle[tcShow /@ args, ", "] <> "]"];
   res = Quiet@Check[TimeConstrained[
       If[k === 0, f, f @@ args], 10, $Aborted], $Failed];
-  Which[
-    res === $Failed || res === $Aborted,
-      {"ERR", shown <> " failed"},
-    tcGraphicsQ[res],
-      With[{path = FileNameJoin[{$TemporaryDirectory, "tuiCalc-wolfram.svg"}]},
-        tcExportSVG[path, res];
-        {"OK", 0, "GFX", path, shown}],
-    tcRealQ[res],
-      {"OK", k, "NUM", tcNum[res], shown <> " = " <> tcShow[res]},
-    VectorQ[res, tcRealQ],
-      {"OK", k, "LIST", StringRiffle[tcNum /@ res, " "],
-        shown <> " = " <> tcShow[res]},
-    True,
-      {"OK", 0, "SYM", tcShow[res], shown <> " = " <> tcShow[res]}]]]
+  tcResult[shown, res, k]]]
+
+(* Apply a function directly to args (no stack lookup). Used for symbolic ops. *)
+tcApply[name_String, args_List] := Catch[Module[
+  {k = Length[args], res, shown},
+  If[! tcKnownQ[name], Throw[{"ERR", "Unknown: " <> name}]];
+  shown = name <> "[" <> StringRiffle[tcShow /@ args, ", "] <> "]";
+  res = Quiet@Check[TimeConstrained[Symbol[name] @@ args, 10, $Aborted], $Failed];
+  tcResult[shown, res, k]]]
 
 (* Print the reply as one line. Tabs/newlines inside fields become
    spaces so the line can't break. *)

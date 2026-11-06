@@ -146,6 +146,26 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   small override table: Power 2 (HP y^x), BinomialCoefficient 2, D 2,
   Max/Min whole stack. Style plots with SetOptions at kernel start: passing
   options inline fails for HoldAll functions like Plot.
+- **Phase 2 status (2026-11-05): round 1 built.** A stack item is a
+  number or `(expr "text")` = `{:wl "text"}` (Wolfram InputForm).
+  `'x` pushes a symbol (`parse-value`); `+ - * / y^x` CHS INV on an
+  expr go to Wolfram via `tcApply[name, args]` (`wolfram-apply`; a
+  late-bound `sym-apply` atom because `chs`/`execute-op` load first);
+  numbers-only stays native. Symbolic results (SYM) now land on the
+  stack (`-4 Sqrt` -> `2*I`). linreg/map/reduce say "needs numbers".
+  Stack cells cut at 28 chars with `…`; `peek` shows the full text.
+  **Plot:** `expr 'x [xmin xmax] Plot` -> `Plot[expr, {x, xmin, xmax}]`
+  (default -10..10), `tcPlotArgs` in `src/tuiCalc.wl`; without a
+  variable it says "Plot needs: expr 'x [xmin xmax]". Wolfram's default
+  PlotRange clips peaks (Sin[x]/x drawn to ~0.42), left as is.
+  **Round 2 to-dos found on the engine:** (1) Expand/Factor/Simplify
+  are 1-arg non-Listable, so the arity rule gives them the whole stack
+  and the result comes back wrapped in a list (`{1 + 2*x + x^2}`):
+  make them take X (overrides). (2) `1/x` shows as `x^(-1)`
+  (InputForm); want a nicer display form. (3) Exact constants become
+  decimals (`2 'Pi *` -> 6.28319, not `2*Pi`): settle with exact
+  numbers. Rounds 3 (fn, map with Wolfram fns, quote/eval, `[N]`) and
+  4 (3D blueline) as planned above.
 - Bug: the `map?`/`reduce?` placeholders say `4 +` / `10 +`, but the parser
   wants the op first (`map + 4`); typing `4 +` gives `Unknown: 4`. Fix the
   placeholder strings (or accept both orders). Good small crew round.

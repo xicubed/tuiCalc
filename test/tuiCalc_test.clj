@@ -547,12 +547,12 @@
     (t/is (= 3 (:k r)))
     (t/is (= "LIST" (:kind r)))
     (t/is (= [] (:values r))))
-  ;; SYM reply
-  (let [r (tc/parse-wolfram-reply "TC\tOK\t0\tSYM\t0. + 2.*I\tSqrt[-4] = 0. + 2.*I")]
-    (t/is (= 0 (:k r)))
+  ;; SYM reply (updated for symbolic values: k = 1, value is expr)
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t1\tSYM\t2*I\tSqrt[-4] = 2*I")]
+    (t/is (= 1 (:k r)))
     (t/is (= "SYM" (:kind r)))
-    (t/is (= [] (:values r)))
-    (t/is (= "Sqrt[-4] = 0. + 2.*I" (:info r))))
+    (t/is (= [(tc/expr "2*I")] (:values r)))
+    (t/is (= "Sqrt[-4] = 2*I" (:info r))))
   ;; GFX reply
   (let [r (tc/parse-wolfram-reply "TC\tOK\t0\tGFX\t/var/tuiCalc-wolfram.svg\tListPlot[{1, 4, 9}]")]
     (t/is (= 0 (:k r)))
@@ -600,13 +600,13 @@
     (t/is (= [1.0 2.0 3.0] (:stack result-state)))))
 
 (t/deftest submit-wolfram-sym-and-err
-  ;; SYM reply: stack unchanged, info set
-  (let [state (assoc (first (tc/init)) :stack [5.0]
-                     :wolfram (fn [_] "TC\tOK\t0\tSYM\t0. + 2.*I\tSqrt[-4] = 0. + 2.*I"))
+  ;; SYM reply: stack gets symbolic result, info set
+  (let [state (assoc (first (tc/init)) :stack [-4.0]
+                     :wolfram (fn [_] "TC\tOK\t1\tSYM\t2*I\tSqrt[-4] = 2*I"))
         state (typed state "Sqrt")
         [result-state _] (tc/submit state)]
-    (t/is (= [5.0] (:stack result-state)))
-    (t/is (= "Sqrt[-4] = 0. + 2.*I" (:info result-state))))
+    (t/is (= [(tc/expr "2*I")] (:stack result-state)))
+    (t/is (= "Sqrt[-4] = 2*I" (:info result-state))))
   ;; ERR reply: stack unchanged, status set
   (let [state (assoc (first (tc/init)) :stack [5.0]
                      :wolfram (fn [_] "TC\tERR\tNeed 2 values"))
@@ -1221,6 +1221,169 @@
   (let [out (tc/view (typed fresh "Mea"))]
     (t/is (clojure.string/includes? out "[MeanDeviation]"))
     (t/is (clojure.string/includes? out "+8"))))
+
+;; ---------------------------------------------------------------
+;; Symbolic stack values (spec-sym-r1.md)
+;; ---------------------------------------------------------------
+
+;; Test 1: expr and expr?
+(t/deftest sym-01-expr-and-expr-question
+  (t/is (= {:wl "x"} (tc/expr "x")))
+  (t/is (true? (tc/expr? (tc/expr "x"))))
+  (t/is (false? (tc/expr? 2.0))))
+
+;; Test 2: show-value and show-cell
+(t/deftest sym-02-show-value-and-show-cell
+  (t/is (= "2.5" (tc/show-value 2.5)))
+  (t/is (= "x^2" (tc/show-value (tc/expr "x^2"))))
+  (let [long-expr (tc/expr (apply str (repeat 40 "a")))]
+    (t/is (= 28 (count (tc/show-cell long-expr))))
+    (t/is (= "…" (subs (tc/show-cell long-expr) 27 28))))
+  (let [exact-expr (tc/expr (apply str (repeat 28 "b")))]
+    (t/is (= 28 (count (tc/show-cell exact-expr))))))
+
+;; Test 3: parse-value
+(t/deftest sym-03-parse-value
+  (t/is (= (tc/expr "x") (tc/parse-value "'x")))
+  (t/is (= (tc/expr "alpha2") (tc/parse-value "'alpha2")))
+  (t/is (= 2.5 (tc/parse-value "2.5")))
+  (t/is (nil? (tc/parse-value "'2x")))
+  (t/is (nil? (tc/parse-value "x"))))
+
+;; Test 4: submit pushes quoted symbols
+(t/deftest sym-04-submit-quoted-symbols
+  (t/is (= [(tc/expr "x")] (submit->stack "'x")))
+  (t/is (= [(tc/expr "Pi")] (submit->stack "'Pi"))))
+
+;; Test 5: wl-value for mixed args
+(t/deftest sym-05-wl-value-mixed
+  (t/is (= "tcReply[tcCall[\"Total\", {1, (x)}]]"
+           (tc/wolfram-call-line "Total" [1.0 (tc/expr "x")]))))
+
+;; Test 6: wolfram-apply-line
+(t/deftest sym-06-wolfram-apply-line
+  (t/is (= "tcReply[tcApply[\"Plus\", {(x), 1}]]"
+           (tc/wolfram-apply-line "Plus" [(tc/expr "x") 1.0]))))
+
+;; Test 7: parse-wolfram-reply SYM
+(t/deftest sym-07-parse-wolfram-reply-sym
+  (let [r (tc/parse-wolfram-reply "TC\tOK\t2\tSYM\t1 + x\tPlus[x, 1] = 1 + x")]
+    (t/is (= 2 (:k r)))
+    (t/is (= "SYM" (:kind r)))
+    (t/is (= [(tc/expr "1 + x")] (:values r)))
+    (t/is (= "Plus[x, 1] = 1 + x" (:info r)))))
+
+;; Test 8: execute-op on expressions
+(t/deftest sym-08-execute-op-expr
+  (let [sent (atom [])
+        state (assoc fresh :stack [(tc/expr "x") 1.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t2\tSYM\t1 + x\tPlus[x, 1] = 1 + x"))]
+    (let [result-state (tc/execute-op state "+")]
+      (t/is (= [(tc/expr "1 + x")] (:stack result-state)))
+      (t/is (= "Plus[x, 1] = 1 + x" (:info result-state)))
+      (t/is (= ["tcReply[tcApply[\"Plus\", {(x), 1}]]"] @sent)))))
+
+;; Test 9: numbers stay native
+(t/deftest sym-09-execute-op-native
+  (let [state (assoc fresh :stack [2.0 3.0])]
+    (t/is (= [5.0] (:stack (tc/execute-op state "+"))))))
+
+;; Test 10: op names map to Wolfram names
+(t/deftest sym-10-op-names
+  (doseq [[op wl-name] [["-" "Subtract"] ["*" "Times"] ["/" "Divide"] ["^" "Power"]]
+          :let [sent (atom [])
+                state (assoc fresh :stack [(tc/expr "x") 2.0]
+                             :wolfram (fn [line]
+                                        (swap! sent conj line)
+                                        "TC\tOK\t1\tSYM\tx^2\tPower[x, 2] = x^2"))
+                _ (tc/execute-op state op)]]
+    (t/is (some #(clojure.string/includes? % (str "tcApply[\"" wl-name "\"")) @sent)
+          (str "Op " op " should call " wl-name))))
+
+;; Test 11: CHS and INV on expressions
+(t/deftest sym-11-chs-and-inv-expr
+  (let [sent (atom [])
+        state (assoc fresh :stack [(tc/expr "x")]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tSYM\t-x\tMinus[x] = -x"))]
+    (let [result-state (tc/chs state)]
+      (t/is (= [(tc/expr "-x")] (:stack result-state)))
+      (t/is (= ["tcReply[tcApply[\"Minus\", {(x)}]]"] @sent))))
+  (let [sent (atom [])
+        state (assoc fresh :stack [(tc/expr "x")]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tSYM\t1/x\tDivide[1, x] = 1/x"))]
+    (let [_ (tc/inv state)]
+      (t/is (some #(clojure.string/includes? % "tcApply[\"Divide\", {1, (x)}]") @sent)))))
+
+;; Test 12: no engine
+(t/deftest sym-12-no-engine
+  (let [state (assoc fresh :stack [(tc/expr "x") 1.0] :wolfram nil)]
+    (let [result-state (tc/execute-op state "+")]
+      (t/is (= [(tc/expr "x") 1.0] (:stack result-state)))
+      (t/is (= "No Wolfram Engine (install wolframscript)" (:status result-state))))))
+
+;; Test 13: native-only ops reject expressions
+(t/deftest sym-13-native-only-reject-expr
+  (let [state (assoc fresh :stack [(tc/expr "x") 1.0 2.0 3.0])
+        [result-state _] (tc/linreg-action state)]
+    (t/is (= "linreg needs numbers" (:status result-state)))
+    (t/is (= [(tc/expr "x") 1.0 2.0 3.0] (:stack result-state)))
+    (let [[s _] (tc/submit (typed state "map + 1"))]
+      (t/is (= "map needs numbers" (:status s)))
+      (t/is (= [(tc/expr "x") 1.0 2.0 3.0] (:stack s))))
+    (let [[s _] (tc/submit (typed state "reduce +"))]
+      (t/is (= "reduce needs numbers" (:status s)))
+      (t/is (= [(tc/expr "x") 1.0 2.0 3.0] (:stack s))))))
+
+;; Test 14: display and Wolfram call with mixed stack
+(t/deftest sym-14-display-and-call-mixed
+  (t/is (some #(clojure.string/includes? % "x^2") (tc/stack-lines [(tc/expr "x^2")])))
+  (t/is (= "peek = x^2 + 1" (:info (tc/peek-top (assoc fresh :stack [(tc/expr "x^2 + 1")])))))
+  (let [sent (atom [])
+        state (assoc fresh :stack [(tc/expr "x") 2.0]
+                     :wolfram (fn [line]
+                                (swap! sent conj line)
+                                "TC\tOK\t1\tNUM\t5\tTotal[{x, 2}] = 5"))]
+    (let [[result-state _] (tc/submit (typed state "Total"))]
+      (t/is (some? result-state))
+      (t/is (some #(clojure.string/includes? % "tcCall[\"Total\", {(x), 2}]") @sent)))))
+
+(t/deftest sym-16-op-key-commits-quoted-symbol
+  ;; Stack [1], type 'x, press + : x is committed and Plus[1, x] sent
+  ;; (HP style, like "12" then +). update-fn, so the undo entry too.
+  (let [sent  (atom [])
+        st    (typed (assoc fresh :stack [1.0]
+                            :wolfram (fn [line]
+                                       (swap! sent conj line)
+                                       "TC\tOK\t2\tSYM\t1 + x\tPlus[1, x] = 1 + x"))
+                     "'x")
+        msg   {:type :key-press :key "+" :alt false :ctrl false :shift false}
+        [s _] (tc/update-fn st msg)]
+    (t/is (= [(tc/expr "1 + x")] (:stack s)))
+    (t/is (= ["tcReply[tcApply[\"Plus\", {1, (x)}]]"] @sent))
+    (t/is (= "" (tc/input-text s)))
+    (t/is (= [[1.0]] (:undo s)))))
+
+(t/deftest sym-17-plot-expression
+  ;; expr 'x -5 3 Plot: the whole stack goes to tcCall (the engine
+  ;; picks the range off it); a GFX reply opens the plot, stack kept.
+  (let [sent  (atom [])
+        stack [(tc/expr "(1 + x)^2") (tc/expr "x") -5.0 3.0]
+        st    (typed (assoc fresh :stack stack
+                            :wolfram (fn [line]
+                                       (swap! sent conj line)
+                                       "TC\tOK\t0\tGFX\t/var/tuiCalc-wolfram.svg\tPlot[(1 + x)^2, {x, -5, 3}]"))
+                     "Plot")
+        [s cmd] (tc/submit st)]
+    (t/is (= ["tcReply[tcCall[\"Plot\", {((1 + x)^2), (x), -5, 3}]]"] @sent))
+    (t/is (= stack (:stack s)))
+    (t/is (= "Plot[(1 + x)^2, {x, -5, 3}]" (:info s)))
+    (t/is (some? cmd))))
 
 ;; ---------------------------------------------------------------
 ;; Run

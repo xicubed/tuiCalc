@@ -61,6 +61,27 @@
   (when (and (string? s) (re-matches #"^-?\d+$" s))
     (Integer/parseInt s)))
 
+;; Expression values: a Wolfram expression kept as InputForm text.
+;; (expr s) -> {:wl s}; (expr? v) -> true for such a map.
+(defn expr [s]
+  {:wl s})
+
+(defn expr? [v]
+  (and (map? v) (contains? v :wl)))
+
+;; Show a value for display: numbers -> (str v); expr -> its text.
+(defn show-value [v]
+  (if (expr? v)
+    (:wl v)
+    (str v)))
+
+;; Show a value in the stack cell: cut to 28 chars (27 + "…").
+(defn show-cell [v]
+  (let [txt (show-value v)]
+    (if (> (count txt) 28)
+      (str (subs txt 0 27) "…")
+      txt)))
+
 (defn apply-op [stack op]
   (if (< (count stack) 2)
 
@@ -76,41 +97,80 @@
 ;; ok getting fancy
 ;; instead of 4 [Enter] 5 [Enter] + [Enter]
 ;; we want    4 [Enter] 5 + ==> 9.0
+
+;; Parse a value: number, or quoted symbol like 'x -> expr.
+;; Returns nil if neither.
+(defn parse-value [s]
+  (if-let [n (parse-number s)]
+    n
+    (when (re-matches #"'([A-Za-z][A-Za-z0-9]*)" s)
+      (expr (second (re-find #"'([A-Za-z][A-Za-z0-9]*)" s))))))
+
 (defn commit-input [state]
   (let [token (str/trim (text-input/value (:input state)))]
-    (if-let [n (and (not (str/blank? token))
-                    (parse-number token))]
+    (if-let [v (and (not (str/blank? token))
+                    (parse-value token))]
       (-> state
-          (update :stack conj n)
+          (update :stack conj v)
           (assoc :input (text-input/reset (:input state))))
       state)))
+;; Map of op tokens to Wolfram function names.
+(def op->wl
+  {"+" "Plus"
+   "-" "Subtract"
+   "*" "Times"
+   "x" "Times"
+   "/" "Divide"
+   "^" "Power"
+   "pow" "Power"})
+
+;; Late-bound hook for symbolic operations (set after wolfram-apply is defined).
+(def sym-apply (atom nil))
+
+;; Execute a binary operator.
+;; If both Y and X are numbers -> native; otherwise -> Wolfram.
 (defn execute-op [state token]
   (let [state (commit-input state)
-        [stack status] (apply-op (:stack state) (ops token))]
-    (assoc state
-           :stack stack
-           :status status)))
+        stack (:stack state)]
+    (if (< (count stack) 2)
+      (assoc state :status "Need two values")
+      (let [x   (peek stack)
+            y   (peek (pop stack))
+            stack (pop (pop stack))]
+        (if (and (number? y) (number? x))
+          ;; Both numbers: native, exactly as before.
+          (let [[stack status] (apply-op (:stack state) (ops token))]
+            (assoc state :stack stack :status status))
+          ;; An expression is involved: Wolfram does it. Errors
+          ;; (no engine, unknown, timeout) come back in :status.
+          (first (@sym-apply state (op->wl token) [y x] 2)))))))
 
 ;; Push pi onto the stack (committing any pending input first).
 (defn push-pi [state]
   (update (commit-input state) :stack conj Math/PI))
 
 ;; Change sign of the top stack value.
+;; Number -> native; expr -> Wolfram Minus.
 (defn chs [state]
   (if (empty? (:stack state))
     (assoc state :status "Stack empty")
     (let [top   (peek (:stack state))
           stack (pop (:stack state))]
-      (assoc state :stack (conj stack (* -1 top))))))
+      (if (expr? top)
+        (first (@sym-apply state "Minus" [top] 1))
+        (assoc state :stack (conj stack (* -1 top)))))))
 
 ;; Invert the top stack value (1/x). Uses ieee-div so 1/0 behaves
 ;; like division (Infinity or NaN).
+;; Number -> native; expr -> Wolfram Divide[1, X].
 (defn inv [state]
   (if (empty? (:stack state))
     (assoc state :status "Stack empty")
     (let [top   (peek (:stack state))
           stack (pop (:stack state))]
-      (assoc state :stack (conj stack (ieee-div 1.0 top))))))
+      (if (expr? top)
+        (first (@sym-apply state "Divide" [1.0 top] 1))
+        (assoc state :stack (conj stack (ieee-div 1.0 top)))))))
 
 ;; Swap X and Y (the last two elements). HP-15c x<>y.
 (defn swap-xy [state]
@@ -172,7 +232,7 @@
 (defn peek-top [state]
   (if (empty? (:stack state))
     (assoc state :status "Stack empty")
-    (assoc state :info (str "peek = " (peek (:stack state))))))
+    (assoc state :info (str "peek = " (show-value (peek (:stack state)))))))
 
 ;; Show the stack depth (Clojure count).
 (defn count-stack [state]
@@ -491,7 +551,10 @@
 ;; Linear regression action: computes regression and returns [state' cmd].
 ;; If successful (no :status), cmd opens browser plot; otherwise cmd is nil.
 (defn linreg-action [state]
-  (let [state' (linreg state)]
+  (let [state' (if (some expr? (:stack state))
+                 ;; linreg is native: numbers only.
+                 (assoc state :status "linreg needs numbers")
+                 (linreg state))]
     (if (:status state')
       [state' nil]
       (let [[m b] (:stack state')
@@ -555,11 +618,24 @@
       (str (long d))
       (str/replace (str d) "E" "*^"))))
 
+;; Convert a stack value to Wolfram syntax.
+;; Number -> wl-num; expr -> "(text)".
+(defn wl-value [v]
+  (if (expr? v)
+    (str "(" (:wl v) ")")
+    (wl-num v)))
+
 ;; Build tcReply[tcCall["Name", {v1, v2, ...}]]
 (defn wolfram-call-line [name stack]
-  (let [nums (map wl-num stack)
-        args (if (empty? nums) "{}" (str "{" (str/join ", " nums) "}"))]
+  (let [vals (map wl-value stack)
+        args (if (empty? vals) "{}" (str "{" (str/join ", " vals) "}"))]
     (str "tcReply[tcCall[\"" name "\", " args "]]")))
+
+;; Build tcReply[tcApply["Name", {v1, v2, ...}]]
+(defn wolfram-apply-line [name args]
+  (let [vals (map wl-value args)
+        args-str (if (empty? vals) "{}" (str "{" (str/join ", " vals) "}"))]
+    (str "tcReply[tcApply[\"" name "\", " args-str "]]")))
 
 ;; Parse Wolfram reply line into a map
 (defn parse-wolfram-reply [line]
@@ -578,7 +654,7 @@
             (cond
               (= kind "NUM") {:k k :kind "NUM" :values [(Double/parseDouble payload)] :info info}
               (= kind "LIST") {:k k :kind "LIST" :values (if (str/blank? payload) [] (mapv Double/parseDouble (str/split payload #"\s+"))) :info info}
-              (= kind "SYM") {:k 0 :kind "SYM" :values [] :info info}
+              (= kind "SYM") {:k k :kind "SYM" :values [(expr payload)] :info info}
               (= kind "GFX") {:k 0 :kind "GFX" :path payload :info info}
               :else {:error "Wolfram: unknown reply"})))))))
 
@@ -598,8 +674,8 @@
     (if (nil? wolfram)
       [(assoc state :status "No Wolfram Engine (install wolframscript)") nil]
       (let [stack (:stack state)]
-        ;; Check for NaN/Infinity
-        (if (some #(or (Double/isNaN %) (Double/isInfinite %)) stack)
+        ;; Check for NaN/Infinity (only on numbers).
+        (if (some #(and (number? %) (or (Double/isNaN %) (Double/isInfinite %))) stack)
           [(assoc state :status "Wolfram needs finite numbers") nil]
           (let [line (wolfram-call-line name stack)
                 reply (wolfram line)
@@ -615,12 +691,33 @@
                   [(assoc state :info info) (plot-cmd (wolfram-plot-html (:path parsed) info))]
                   [(assoc state :stack stack :info info) nil])))))))))
 
+;; Wolfram apply operation: [state cmd]
+;; Sends tcApply, replaces top k stack items with reply's :values.
+(defn wolfram-apply [state name args k]
+  (let [state (commit-input state)
+        wolfram (:wolfram state)]
+    (if (nil? wolfram)
+      [(assoc state :status "No Wolfram Engine (install wolframscript)") nil]
+      (let [line (wolfram-apply-line name args)
+            reply (wolfram line)
+            parsed (parse-wolfram-reply reply)]
+        (if (:error parsed)
+          [(assoc state :status (:error parsed)) nil]
+          (let [values (:values parsed)
+                info (:info parsed)
+                ;; Replace top k items with values (ignore reply's k)
+                stack (into (subvec (:stack state) 0 (- (count (:stack state)) k)) values)]
+            [(assoc state :stack stack :info info) nil]))))))
+
+;; Set the late-bound hook after wolfram-apply is defined.
+(reset! sym-apply wolfram-apply)
+
 ;; Wolfram menu structure: folders at top level, functions inside.
 (def wolfram-menu
   [["Math"  ["Sqrt" "Abs" "Round" "Floor" "Mod" "Factorial"]]
    ["Stats" ["Total" "Mean" "Median" "StandardDeviation" "Variance"]]
    ["Lists" ["Sort" "Max" "Min" "Accumulate" "Differences"]]
-   ["Plots" ["ListPlot" "ListLinePlot" "Histogram"]]])
+   ["Plots" ["Plot" "ListPlot" "ListLinePlot" "Histogram"]]])
 
 ;; Return the folder name containing function `name`, or nil.
 (defn menu-folder-of [name]
@@ -763,6 +860,10 @@
       (str/blank? op-arg-str)
       [(abort-prompt state) nil]
 
+      ;; map is native: numbers only (map with Wolfram fns: phase 2 round 3).
+      (some expr? stack)
+      [(assoc state :status (str pending " needs numbers")) nil]
+
       :else
       (let [[op-token & arg-parts] (str/split (str/lower-case op-arg-str) #"\s+")
             arg-str (when (seq arg-parts) (str/join " " arg-parts))]
@@ -811,9 +912,14 @@
           [(assoc state :status (str "Unknown: " op-token)) nil])))))
 
 ;; Process reduce command with op and optional init value.
+;; If any stack item is an expression: status "reduce needs numbers".
 (defn handle-reduce [state op-token arg-str]
   (let [stack (:stack state)]
     (cond
+      ;; reduce is native: numbers only.
+      (some expr? stack)
+      [(assoc state :status "reduce needs numbers") nil]
+
       ;; Unknown op (check before empty stack).
       (not (contains? ops op-token))
       [(assoc state :status (str "Unknown: " op-token)) nil]
@@ -976,18 +1082,12 @@
 
       ;; Arithmetic operator.
       (contains? ops token)
-      (let [[stack status]
-            (apply-op (:stack state)
-                      (ops token))]
-        [(assoc state
-                :stack stack
-                :status status)
-         nil])
+      [(execute-op state token) nil]
 
-      ;; Otherwise try to push a number or Wolfram command.
+      ;; Otherwise try to push a number, quoted symbol, or Wolfram command.
       :else
-      (if-let [n (parse-number token)]
-        [(update state :stack conj n) nil]
+      (if-let [v (parse-value raw)]
+        [(update state :stack conj v) nil]
         (if (re-matches #"[A-Z][A-Za-z0-9]*" raw)
           (wolfram-op state (search-pick raw))
           [(assoc state
@@ -1325,7 +1425,7 @@
            (contains? ops key)
            (not= "x" key)
            (let [txt (text-input/value (:input state))]
-             (or (str/blank? txt) (parse-number txt))))
+             (or (str/blank? txt) (parse-value txt))))
       (let [line    (str/trim (str key " " (text-input/value (:input state))))
             [s' c'] (submit (update state :input assoc
                                     :value (vec line) :pos (count line)))]
@@ -1343,7 +1443,7 @@
            (not (#{"-" "x"} key))
            (not (#{"map" "reduce"} (:pending state)))
            (let [txt (text-input/value (:input state))]
-             (or (str/blank? txt) (parse-number txt))))
+             (or (str/blank? txt) (parse-value txt))))
       (let [s' (execute-op (if (:pending state)
                              (abort-prompt state)
                              state)
@@ -1426,7 +1526,7 @@
      ;; Oldest visible value first,
      ;; newest / X register at bottom.
      (map
-      #(format "│ %28s │" (str %))
+      #(format "│ %28s │" (show-cell %))
       visible))))
 
 (defn view [state]
