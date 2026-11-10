@@ -155,3 +155,7 @@ divisor, plus a few minor ones).
 
 **CLAUDE.md** holds the design decisions and repo conventions; it's loaded
 into Claude Code sessions automatically.
+
+## Copyright
+
+Copyright (c) 2026 University of Idaho. All rights reserved.
