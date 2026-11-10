@@ -63,7 +63,7 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   2. `bbin install https://github.com/bhauman/clojure-mcp-light.git --tag v0.2.2`
      (puts `clj-paren-repair-claude-hook` in `~/.local/bin`)
   3. In `~/.claude/settings.json` (user settings, so MindRouter `--settings`
-     sessions get it too) add `/Users/mikel/.local/bin/clj-paren-repair-claude-hook`
+     sessions get it too) add `~/.local/bin/clj-paren-repair-claude-hook`
      as a command hook on PreToolUse and PostToolUse (matcher `Write|Edit`)
      and on SessionEnd. **No `--cljfmt`** — that reformats whole files and
      puts unrelated lines in every diff. Merge with the existing herdr hooks.
@@ -293,7 +293,7 @@ survive either: Herdr clears a name when its agent exits. Monet rebuilds them:
    Name Monet's own tab with `herdr tab rename <tab id> crew-1`.
 3. Start each one with its `--model` from the table:
    `herdr agent start <name> --kind claude --pane <id> --timeout 60000 --
-   --settings /Users/mikel/exp/fizz/.claude/settings.mindrouter.json --model <model>`
+   --settings ~/exp/fizz/.claude/settings.mindrouter.json --model <model>`
 4. Have each say hi in one line so the user can see which window is whose.
 5. Monet itself is started by the user: `claude --model default` (no
    `--settings`) in a Herdr pane, then `herdr agent rename <its pane id> monet`.
