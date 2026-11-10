@@ -1417,6 +1417,21 @@
              ((tc/wolfram-sender engine) "anything")))))
 
 ;; ---------------------------------------------------------------
+;; Opening plots on macOS / Windows / Linux
+;; ---------------------------------------------------------------
+
+(t/deftest browser-command-per-os
+  (t/is (= ["open" "/tmp/p.html"] (tc/browser-command "Mac OS X" "/tmp/p.html")))
+  (t/is (= ["rundll32" "url.dll,FileProtocolHandler" "C:\\Temp\\p.html"]
+           (tc/browser-command "Windows 11" "C:\\Temp\\p.html")))
+  (t/is (= ["xdg-open" "/tmp/p.html"] (tc/browser-command "Linux" "/tmp/p.html"))))
+
+(t/deftest wolfram-plot-html-file-url
+  ;; A proper file:/// URL, not "file://" glued to a path.
+  (t/is (clojure.string/includes? (tc/wolfram-plot-html "/tmp/x.svg" "i")
+                                  "src=\"file:///tmp/x.svg\"")))
+
+;; ---------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------
 ;; bb's stripped clojure.test has no add-report/all-tests, and its

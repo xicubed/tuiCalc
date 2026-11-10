@@ -7,25 +7,50 @@ it's easy to follow on a screen share.
 
 This has been a test of different LLM models.
 
-## Run
+## Install and run
 
-You need [babashka](https://babashka.org/) (bb) — on macOS:
+You need [babashka](https://babashka.org/) (`bb`, v1.13 or newer) and
+git. macOS is what tuiCalc is built and tested on; **Linux and Windows
+should work but haven't been tried yet**. If something breaks there,
+please say so.
+
+**macOS**
 
 ```
 brew install babashka        # or: brew upgrade babashka
-bb --version                 # v1.13.x
 ```
 
-No other setup: the charm dependency is pinned in `bb.edn` and fetched
-automatically on first run.
+**Linux**
 
 ```
+bash < <(curl -s https://raw.githubusercontent.com/babashka/babashka/master/install)
+# or, with Homebrew on Linux: brew install babashka
+```
+
+Plots open with `xdg-open`, so you need a desktop session with a
+default browser (`xdg-utils`; most desktops have it already).
+
+**Windows** (PowerShell, with [Scoop](https://scoop.sh/))
+
+```
+scoop bucket add scoop-clojure https://github.com/littleli/scoop-clojure
+scoop install babashka
+```
+
+Run it in **Windows Terminal** (it handles the colours and the mouse
+clicks; the old `cmd.exe` console may not).
+
+**Then, everywhere:**
+
+```
+bb --version                 # v1.13.x or newer
 git clone https://github.com/xicubed/tuiCalc.git
 cd tuiCalc
 bb ./src/tuiCalc.clj
 ```
 
-(or `bb -m tuiCalc`)
+(or `bb -m tuiCalc`). No other setup: the charm dependency is pinned in
+`bb.edn` and fetched automatically on first run.
 
 The TUI renders a stack box, a `> ` input line, and four rows of clickable
 buttons.
@@ -45,10 +70,16 @@ symbols is done by Wolfram, so `'x 1 + 2 y^x` -> `(1 + x)^2`.
 `expr 'x [xmin xmax] Plot` plots in the browser (same blueline style as the
 lr plot).
 
-Setup (macOS):
+Setup (same steps on macOS, Linux and Windows; only the downloads and
+the font folder differ):
 
-1. Get the free Wolfram Engine: https://www.wolfram.com/engine/ (needs a
-   free Wolfram ID; it installs `wolframscript`).
+1. Get the free Wolfram Engine for your system from
+   https://www.wolfram.com/engine/ (needs a free Wolfram ID). macOS: the
+   app. Linux: the `.sh` installer (`sudo bash WolframEngine_*_LINUX.sh`).
+   Windows: the `.exe` installer. tuiCalc talks to it through
+   `wolframscript`, which must be on your PATH: check with
+   `wolframscript -version`. If it's missing, install it separately from
+   https://www.wolfram.com/wolframscript/.
 2. Activate it once: run `wolframscript` and sign in with the Wolfram ID
    when asked.
 3. If tuiCalc reports "Wolfram Engine failed to start: no answer", point
@@ -60,10 +91,14 @@ Setup (macOS):
 4. Check: `wolframscript -code '1+1'` prints 2 (the first run takes a few
    seconds).
 5. Plots use the Architects Daughter font; the kernel draws the text, so
-   install it for the kernel:
-   `~/Library/Fonts/ArchitectsDaughter-Regular.ttf` from
-   https://github.com/google/fonts (`ofl/architectsdaughter`). Without it,
-   plots fall back to a plain sans font.
+   install it where the kernel can see it. Get
+   `ArchitectsDaughter-Regular.ttf` from https://github.com/google/fonts
+   (`ofl/architectsdaughter`), then:
+   - macOS: put it in `~/Library/Fonts/`.
+   - Linux: put it in `~/.local/share/fonts/`, then run `fc-cache -f`.
+   - Windows: right-click the file, **Install for all users**.
+
+   Without it, plots fall back to a plain sans font.
 
 How it runs: tuiCalc starts one long-lived `wolframscript` process in the
 background at launch (a few seconds; calls before it's ready say "Wolfram
@@ -109,7 +144,7 @@ Notes:
   flashes it so a screen-share viewer sees what ran.
 - **Plot:** on successful `lr`, the app writes a self-contained HTML/SVG
   page to `tuiCalc-plot.html` in the system temp dir and **opens it in the
-  browser** (`open` on macOS, `xdg-open` on Linux). Old-style blueline
+  browser** (`open` on macOS, `xdg-open` on Linux, `rundll32` on Windows). Old-style blueline
   drawing: blue ink on off-white, a square equal-scale plot box (both axes
   share one grid step, so slope 1 is 45 degrees) always including the
   origin, dots with "x, y" hover labels, and a title block with equation,

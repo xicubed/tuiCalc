@@ -507,16 +507,23 @@
       "</body>\n"
       "</html>"))))
 
+;; The command that opens `path` in the default browser on this OS.
+;; Windows has no xdg-open; rundll32's FileProtocolHandler opens a file
+;; with its default app and needs no shell quoting.
+(defn browser-command [os-name path]
+  (cond
+    (re-find #"(?i)mac" os-name)     ["open" path]
+    (re-find #"(?i)windows" os-name) ["rundll32" "url.dll,FileProtocolHandler" path]
+    :else                            ["xdg-open" path]))
+
 ;; Command to write HTML to temp file and open in browser.
 (defn plot-cmd [html]
   (program/cmd
    (fn []
-     (let [path (str (System/getProperty "java.io.tmpdir") "/tuiCalc-plot.html")
-           os-name (System/getProperty "os.name")
-           opener (if (re-find #"(?i)mac" os-name) "open" "xdg-open")]
+     (let [path (str (fs/path (System/getProperty "java.io.tmpdir") "tuiCalc-plot.html"))]
        (try
          (spit path html)
-         (process/shell opener path)
+         (apply process/shell (browser-command (System/getProperty "os.name") path))
          {:type :plot-opened}
          (catch Exception e
            {:type :plot-opened :error (ex-message e)}))))))
@@ -698,7 +705,7 @@
   (str "<!doctype html>\n"
        "<html>\n<head><meta charset=\"utf-8\"><title>tuiCalc — " info "</title></head>\n"
        "<body style=\"background:#f4f1e6;margin:0;padding:20px;text-align:center;\">\n"
-       "<img src=\"file://" path "\" style=\"max-width:100%;max-height:80vh;\">\n"
+       "<img src=\"" (str (.toUri (fs/path path))) "\" style=\"max-width:100%;max-height:80vh;\">\n"
        "<p style=\"font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:15px;color:#1f4e9a;\">" info "</p>\n"
        "</body>\n</html>"))
 
