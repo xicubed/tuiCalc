@@ -16,8 +16,8 @@
      TC  ERR  <message>
 
    k = how many values were taken from the top of the stack; tuiCalc
-   replaces them with the NUM/LIST values. GFX leaves the stack alone.
-   SYM now reports the real k (args consumed) instead of always 0.
+   replaces them with the NUM/LIST/SYM values. GFX leaves the stack alone.
+   tcApply results always replace exactly the args sent.
    Numbers are in CForm, which Clojure's parse-double reads
    ("3.", "1.4142135623730951", "1.e10", "-2.5e-7"). *)
 
