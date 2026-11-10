@@ -1,8 +1,8 @@
 # tuiCalc manual
 
 For the person sitting at the calculator: what it does and how to drive
-it. Setup (babashka, Wolfram Engine) is in **README.md**; the Wolfram
-bridge internals are in **docs/wolfram-protocol.md**.
+it. Setup (babashka, Wolfram Engine) is in [README.md](../README.md); the Wolfram
+bridge internals are in [docs/wolfram-protocol.md](wolfram-protocol.md).
 
 This is a living draft, organised by feature. New sections get added as
 features land.
@@ -108,7 +108,7 @@ and a title block with the equation, point count, and date.
 
 ## Wolfram functions
 
-With the free Wolfram Engine installed (setup in **README.md**), any
+With the free Wolfram Engine installed (setup in [README.md](../README.md)), any
 **Capitalized** name goes to Wolfram — typed, clicked, or searched.
 Lowercase stays Clojure.
 

@@ -103,3 +103,6 @@ pom.xml.asc
 # macOS
 .DS_Store
 .lsp/.cache/
+
+# Crew specs and roster (Monet's working files)
+/.crew/

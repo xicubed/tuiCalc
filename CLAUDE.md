@@ -212,10 +212,11 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   that don't fit one row.
 - **Docs plan (user, 2026-11-10).** `docs/wolfram-protocol.md` (Docteur
   Murphy) is the developer reference for the Wolfram bridge (`wl-value`,
-  `tcCall`/`tcApply`, reply format, `sym-apply`). **At the end** of the
-  build, write a user manual (`MANUAL.md` or `docs/manual.md`): what the
-  calculator can do and how, so we remember what we built. Keep notes
-  here as features land so the manual has a source.
+  `tcCall`/`tcApply`, reply format, `sym-apply`). The user manual is
+  `docs/manual.md` (Docteur Murphy, 2026-11-10; moved from the repo
+  root): what the calculator can do and how, organised by feature. It
+  is a living draft: add to it after every feature round. Crew specs
+  live in `.crew/specs/` (gitignored), not in the commit.
 - **Future: exact numbers** (user agreed 2026-11-05, not scheduled).
   Use Clojure's exact numbers, not BigDecimal: integers + ratios
   (`(/ 1 3)` = `1/3`), which pair with Wolfram exact numbers as doubles
