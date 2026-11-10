@@ -20,8 +20,8 @@ No other setup: the charm dependency is pinned in `bb.edn` and fetched
 automatically on first run.
 
 ```
-git clone <repo>
-cd fizz
+git clone https://github.com/xicubed/tuiCalc.git
+cd tuiCalc
 bb ./src/tuiCalc.clj
 ```
 

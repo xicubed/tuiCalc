@@ -82,12 +82,11 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
   `git push github <tag>:main` (plus `git push github <tag>`).
 - On a new machine, after cloning from GitLab:
   `git remote add github https://github.com/xicubed/tuiCalc.git`.
-- **First push needs `--force`:** GitHub's `main` is an unrelated early
-  copy (Sep 30, 9 commits, all superseded; checked 2026-11-10). Confirm
-  with the user before forcing. After that, plain pushes work.
+- **First push was forced (2026-11-10)**, replacing an unrelated early
+  copy on GitHub (Sep 30, 9 commits, all superseded). Plain pushes work
+  now; never `--force` to GitHub again without the user's say-so.
 - Before pushing to GitHub: no secrets in tracked files (keys live in
-  gitignored `.claude/`), no `/Users/<name>` paths (use `~`), and fix
-  README's `git clone <repo>` line to the GitHub URL if still a placeholder.
+  gitignored `.claude/`), no `/Users/<name>` paths (use `~`).
 
 ## Open work
 
