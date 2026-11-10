@@ -71,6 +71,24 @@ It's also designed to be screen-share-friendly (big buttons, visible feedback).
      Restart panes started before the change.
   Side effect: the hook auto-approves Clojure Write/Edit permission prompts.
 
+## Git remotes: GitLab every day, GitHub on request (user, 2026-11-10)
+
+- `origin` = GitLab (`https://eo-git-1.engr.uidaho.edu/exp/fizz.git`),
+  the main copy with alpha work. Plain `git push` goes here.
+- `github` = `https://github.com/xicubed/tuiCalc.git`, **public**.
+  `git push github main` only when the user asks ("push to github"),
+  never as part of a normal commit/push. The user picks when work is
+  ready; they may name an older point instead: tag it and
+  `git push github <tag>:main` (plus `git push github <tag>`).
+- On a new machine, after cloning from GitLab:
+  `git remote add github https://github.com/xicubed/tuiCalc.git`.
+- **First push needs `--force`:** GitHub's `main` is an unrelated early
+  copy (Sep 30, 9 commits, all superseded; checked 2026-11-10). Confirm
+  with the user before forcing. After that, plain pushes work.
+- Before pushing to GitHub: no secrets in tracked files (keys live in
+  gitignored `.claude/`), no `/Users/<name>` paths (use `~`), and fix
+  README's `git clone <repo>` line to the GitHub URL if still a placeholder.
+
 ## Open work
 
 - **TODO-tuiCalc.md** lists known bugs from code review.
