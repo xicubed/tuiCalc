@@ -193,4 +193,4 @@ into Claude Code sessions automatically.
 
 ## Copyright
 
-Copyright (c) 2026 University of Idaho. [License](LICENSE).
+Contained in the [License](LICENSE).
